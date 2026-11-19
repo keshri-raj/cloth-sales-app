@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material.icons.rounded.Storefront
@@ -195,7 +196,7 @@ private fun SalesApp() {
     var newCustomerAddress by remember { mutableStateOf("") }
     var savingCustomer by remember { mutableStateOf(false) }
     val cart = remember { mutableStateListOf<CartLine>() }
-    val bills = remember { mutableStateListOf<ShopInvoice>() }
+    val bills = remember(context) { mutableStateListOf<ShopInvoice>().apply { addAll(BillCache.load(context)) } }
     val scope = rememberCoroutineScope()
     val api = remember { ShopApiClient(BuildConfig.SHOP_API_BASE_URL) }
     val products = remember(context) {
@@ -718,6 +719,17 @@ private fun SalesApp() {
                                     }
                                 }.onSuccess { created ->
                                     CustomerHistoryCache.invalidate(context, invoiceCustomer.phone)
+                                    val newBill = ShopInvoice(
+                                        number = created.invoiceNumber,
+                                        date = java.time.LocalDate.now().toString(),
+                                        customerName = invoiceCustomer.name,
+                                        phone = invoiceCustomer.phone,
+                                        total = created.total,
+                                        paymentMode = invoicePayment,
+                                        pdfUrl = created.pdfUrl
+                                    )
+                                    val cachedBills = BillCache.merge(BillCache.load(context), listOf(newBill))
+                                    BillCache.save(context, cachedBills)
                                     if (isNewCustomer) {
                                         val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(invoiceCustomer))
                                         cachedCustomers.clear()
@@ -747,14 +759,18 @@ private fun SalesApp() {
                     loading = billsLoading,
                     onPhone = { billsPhone = it },
                     onBack = { navigateBack() },
-                    onSearch = {
+                    onSync = {
                         val token = idToken
-                        if (!api.isConfigured || token == null) message = "Connect to Shop before viewing bills."
+                        if (!api.isConfigured || token == null) message = "Sign in to Shop before syncing bills. Your saved bills are still available on this phone."
                         else scope.launch {
                             billsLoading = true
                             runCatching { withContext(Dispatchers.IO) { api.bills(token, billsPhone) } }
-                                .onSuccess { result -> bills.clear(); bills.addAll(result) }
-                                .onFailure { message = it.message ?: "Could not load bills." }
+                                .onSuccess { result ->
+                                    val merged = BillCache.merge(BillCache.load(context), result)
+                                    BillCache.save(context, merged)
+                                    bills.clear(); bills.addAll(merged)
+                                }
+                                .onFailure { message = it.message ?: "Could not sync bills. Saved bills are still available on this phone." }
                             billsLoading = false
                         }
                     },
@@ -1581,33 +1597,37 @@ private fun BillsScreen(
     loading: Boolean,
     onPhone: (String) -> Unit,
     onBack: () -> Unit,
-    onSearch: () -> Unit,
+    onSync: () -> Unit,
     onOpenPdf: (String) -> Unit
 ) {
+    val filterDigits = CustomerCache.normalizePhone(phone)
+    val visibleBills = if (filterDigits.isBlank()) bills else bills.filter {
+        CustomerCache.normalizePhone(it.phone).contains(filterDigits)
+    }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(14.dp))
         ScreenHeader(tr("Find a bill", "बिल खोजें"), onBack)
-        Text(tr("Search by customer phone, or leave blank to see recent bills.", "ग्राहक के फ़ोन से खोजें या हाल के बिल देखने के लिए खाली छोड़ें।"), color = Muted, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 14.dp))
+        Text(tr("Saved bills appear here. Filter by phone or sync the latest bills from Shop.", "सहेजे गए बिल यहाँ दिखेंगे। फ़ोन से छाँटें या Shop से नए बिल सिंक करें।"), color = Muted, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 14.dp))
         OutlinedTextField(
             value = phone,
             onValueChange = onPhone,
             modifier = Modifier.fillMaxWidth(),
-            label = { Text(tr("Customer phone (optional)", "ग्राहक का फ़ोन (वैकल्पिक)")) },
-            placeholder = { Text(tr("Leave blank for recent bills", "हाल के बिलों के लिए खाली छोड़ें")) },
+            label = { Text(tr("Filter by customer phone (optional)", "ग्राहक के फ़ोन से छाँटें (वैकल्पिक)")) },
+            placeholder = { Text(tr("Type a phone number", "फ़ोन नंबर लिखें")) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             shape = RoundedCornerShape(14.dp)
         )
         Spacer(Modifier.height(10.dp))
-        Button(onClick = onSearch, enabled = !loading, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(14.dp)) {
+        Button(onClick = onSync, enabled = !loading, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(14.dp)) {
             if (loading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-            else Icon(Icons.Rounded.Search, null)
+            else Icon(Icons.Rounded.Refresh, null)
             Spacer(Modifier.width(8.dp))
-            Text(if (loading) tr("Loading bills…", "बिल लोड हो रहे हैं…") else if (phone.isBlank()) tr("Show recent bills", "हाल के बिल दिखाएँ") else tr("Search this customer", "इस ग्राहक को खोजें"), fontSize = 17.sp)
+            Text(if (loading) tr("Syncing bills…", "बिल सिंक हो रहे हैं…") else tr("Sync bills", "बिल सिंक करें"), fontSize = 17.sp)
         }
         Spacer(Modifier.height(14.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
-            items(bills, key = { it.number }) { bill ->
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
+            items(visibleBills, key = { it.number }) { bill ->
                 Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1625,8 +1645,14 @@ private fun BillsScreen(
                     }
                 }
             }
-            if (bills.isEmpty() && !loading) {
-                item { Text(tr("No bills loaded yet. Choose recent bills or search by phone.", "अभी बिल लोड नहीं हुए। हाल के बिल चुनें या फ़ोन से खोजें।"), color = Muted, fontSize = 16.sp, modifier = Modifier.padding(8.dp)) }
+            if (visibleBills.isEmpty() && !loading) {
+                item {
+                    Text(
+                        if (bills.isEmpty()) tr("No saved bills yet. Tap Sync bills to load them from Shop.", "अभी कोई बिल सहेजा नहीं गया। Shop से बिल लाने के लिए ‘बिल सिंक करें’ दबाएँ।")
+                        else tr("No saved bill matches this phone number.", "इस फ़ोन नंबर से कोई सहेजा हुआ बिल नहीं मिला।"),
+                        color = Muted, fontSize = 16.sp, modifier = Modifier.padding(8.dp)
+                    )
+                }
             }
         }
     }
