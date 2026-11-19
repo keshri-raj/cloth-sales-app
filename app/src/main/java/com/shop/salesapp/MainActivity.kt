@@ -102,6 +102,8 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -358,24 +360,45 @@ private fun SalesApp() {
     }
 
     LaunchedEffect(screen, selectedCustomer?.phone, idToken, api.isConfigured) {
-        val customer = selectedCustomer ?: return@LaunchedEffect
-        if (screen != Screen.CustomerDetail || idToken == null || !api.isConfigured) return@LaunchedEffect
+        val customer = selectedCustomer
+        if (screen != Screen.CustomerDetail || customer == null) {
+            detailBillsLoading = false
+            detailOrdersLoading = false
+            return@LaunchedEffect
+        }
         detailBillsLoading = true
-        val token = idToken ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { api.bills(token, customer.phone) } }
-            .onSuccess { sales -> detailBills = sales }
-            .onFailure { message = it.message ?: "Could not load this customer's sales." }
-        detailBillsLoading = false
-    }
-
-    LaunchedEffect(screen, selectedCustomer?.phone, idToken, api.isConfigured) {
-        val customer = selectedCustomer ?: return@LaunchedEffect
-        if (screen != Screen.CustomerDetail || idToken == null || !api.isConfigured) return@LaunchedEffect
         detailOrdersLoading = true
-        val token = idToken ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { api.orderRequests(token, customer.phone) } }
-            .onSuccess { requests -> detailOrders = requests }
+        val cached = withContext(Dispatchers.IO) { CustomerHistoryCache.load(context, customer.phone) }
+        if (cached != null) {
+            detailBills = cached.sales
+            detailOrders = cached.orderRequests
+            detailBillsLoading = false
+            detailOrdersLoading = false
+            return@LaunchedEffect
+        }
+        val token = idToken
+        if (!api.isConfigured || token == null) {
+            detailBills = emptyList()
+            detailOrders = emptyList()
+            detailBillsLoading = false
+            detailOrdersLoading = false
+            return@LaunchedEffect
+        }
+        val (salesResult, requestsResult) = coroutineScope {
+            val sales = async(Dispatchers.IO) { runCatching { api.bills(token, customer.phone) } }
+            val requests = async(Dispatchers.IO) { runCatching { api.orderRequests(token, customer.phone) } }
+            sales.await() to requests.await()
+        }
+        salesResult.onSuccess { detailBills = it }
+            .onFailure { message = it.message ?: "Could not load this customer's sales." }
+        requestsResult.onSuccess { detailOrders = it }
             .onFailure { message = it.message ?: "Could not load this customer's order requests." }
+        if (salesResult.isSuccess && requestsResult.isSuccess) {
+            withContext(Dispatchers.IO) {
+                CustomerHistoryCache.save(context, customer.phone, salesResult.getOrThrow(), requestsResult.getOrThrow())
+            }
+        }
+        detailBillsLoading = false
         detailOrdersLoading = false
     }
 
@@ -694,6 +717,7 @@ private fun SalesApp() {
                                         api.createInvoice(token, invoiceCustomer.name, invoiceCustomer.phone, invoiceCustomer.email, invoiceAddress, invoicePayment, invoiceItems)
                                     }
                                 }.onSuccess { created ->
+                                    CustomerHistoryCache.invalidate(context, invoiceCustomer.phone)
                                     if (isNewCustomer) {
                                         val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(invoiceCustomer))
                                         cachedCustomers.clear()
@@ -777,6 +801,7 @@ private fun SalesApp() {
                                     api.createOrderRequest(token, orderCustomerName, orderCustomerPhone, orderProductName, orderProductSku, quantity, orderNotes)
                                 }
                             }.onSuccess { request ->
+                                CustomerHistoryCache.invalidate(context, orderCustomerPhone)
                                 message = "Request ${request.requestNumber} sent to the manager. Status: ${request.status}."
                                 orderCustomerName = ""; orderCustomerPhone = ""; orderProductName = ""; orderProductSku = ""; orderQuantity = "1"; orderNotes = ""
                                 backStack.clear(); selectedTab = -1; screen = Screen.Home
