@@ -27,14 +27,14 @@ object BillCache {
                     total = row.optInt("total"),
                     paymentMode = row.optString("paymentMode"),
                     pdfUrl = row.optString("pdfUrl")
-                )
+                ).takeIf { it.isComplete() }
             }
         }.getOrDefault(emptyList())
     }
 
     fun save(context: Context, bills: List<ShopInvoice>) {
         val rows = JSONArray()
-        bills.take(MAX_BILLS).forEach { bill ->
+        bills.asSequence().filter { it.isComplete() }.take(MAX_BILLS).forEach { bill ->
             rows.put(
                 JSONObject()
                     .put("number", bill.number)
@@ -54,10 +54,16 @@ object BillCache {
 
     fun merge(existing: List<ShopInvoice>, updates: List<ShopInvoice>): List<ShopInvoice> {
         val merged = LinkedHashMap<String, ShopInvoice>()
-        existing.forEach { merged[it.number] = it }
-        updates.forEach { merged[it.number] = it }
+        existing.filter { it.isComplete() }.forEach { merged[it.number] = it }
+        updates.filter { it.isComplete() }.forEach { merged[it.number] = it }
         return merged.values
             .sortedWith(compareByDescending<ShopInvoice> { it.date }.thenByDescending { it.number })
             .take(MAX_BILLS)
     }
+
+    private fun ShopInvoice.isComplete(): Boolean =
+        number.isNotBlank() &&
+            CustomerCache.normalizePhone(phone).length >= 8 &&
+            total > 0 &&
+            paymentMode.trim() in setOf("Cash", "UPI", "Card", "Credit")
 }

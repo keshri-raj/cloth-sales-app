@@ -269,10 +269,28 @@ function listBills_(config, phone) {
   if (phone.trim() && digits.length < 8) throw apiError_('Enter a valid phone number to search bills.', 400);
   const invoices = getTable_(config, 'Sales Invoices');
   const customers = getTable_(config, 'Customers');
+  const salesItems = getTable_(config, 'Sales Items');
   const customerById = {};
   customers.rows.forEach(function (row) { customerById[String(row['Customer ID'])] = row; });
+  const itemsByInvoice = {};
+  salesItems.rows.forEach(function (row) {
+    const invoiceNumber = String(row['Invoice #'] || '').trim();
+    const sku = String(row.SKU || '').trim();
+    const quantity = Number(row.Quantity);
+    if (invoiceNumber && sku && Number.isInteger(quantity) && quantity > 0) {
+      itemsByInvoice[invoiceNumber] = (itemsByInvoice[invoiceNumber] || 0) + 1;
+    }
+  });
   return invoices.rows
-    .filter(function (row) { return !digits || normalizedPhone_(row['Customer Phone']) === digits; })
+    .filter(function (row) {
+      const invoiceNumber = String(row['Invoice #'] || '').trim();
+      const customerPhone = normalizedPhone_(row['Customer Phone']);
+      const total = Number(row['Invoice Total']);
+      const paymentMode = String(row['Payment Mode'] || '').trim();
+      return invoiceNumber && customerPhone.length >= 8 && Number.isFinite(total) && total > 0 &&
+        (itemsByInvoice[invoiceNumber] || 0) > 0 && ['Cash', 'UPI', 'Card', 'Credit'].includes(paymentMode) &&
+        (!digits || customerPhone === digits);
+    })
     .sort(function (a, b) { return b._rowNumber - a._rowNumber; })
     .slice(0, 100)
     .map(function (row) {
@@ -334,7 +352,10 @@ function createInvoice_(config, payload, userEmail) {
   const items = payload.items;
   if (normalizedPhone_(phone).length < 8) throw apiError_('Enter a valid customer phone number.', 400);
   if (!['Cash', 'UPI', 'Card'].includes(paymentMode)) throw apiError_('Choose Cash, UPI, or Card.', 400);
-  if (!Array.isArray(items) || items.length === 0 || items.length > 100) throw apiError_('Add between 1 and 100 products.', 400);
+  if (!Array.isArray(items) || items.length === 0 || items.length > 100) throw apiError_('Add between 1 and 100 clothes before saving the bill.', 400);
+  if (items.some(function (item) { return !item || typeof item !== 'object' || !String(item.sku || '').trim(); })) {
+    throw apiError_('One or more bill items are missing a cloth code. Remove the incomplete item and add it again.', 400);
+  }
 
   const inventory = getTable_(config, 'Inventory');
   const customers = getTable_(config, 'Customers');
@@ -359,25 +380,39 @@ function createInvoice_(config, payload, userEmail) {
 
   const resolvedLines = items.map(function (item) {
     const product = inventory.rows.find(function (row) { return String(row.SKU) === String(item.sku); });
-    if (!product) throw apiError_('Product ' + item.sku + ' was not found.', 400);
+    if (!product) throw apiError_('Cloth ' + item.sku + ' was not found. Remove it from the bill and add it again.', 400);
+    if (!String(product['Product Name'] || '').trim()) throw apiError_('A selected cloth is missing its name in Inventory. Ask the manager to correct it before billing.', 400);
     const quantity = Number(item.quantity);
-    if (!Number.isInteger(quantity) || quantity < 1) throw apiError_('Choose a valid quantity for ' + product['Product Name'] + '.', 400);
-    const stock = Number(product['Current Stock'] || 0);
+    if (!Number.isInteger(quantity) || quantity < 1) throw apiError_('Enter a whole-number quantity for ' + product['Product Name'] + '.', 400);
+    const stock = Number(product['Current Stock']);
+    if (!Number.isFinite(stock) || stock < 0) throw apiError_('Stock information is incomplete for ' + product['Product Name'] + '. Ask the manager to update Inventory.', 400);
     if (quantity > stock) throw apiError_('Only ' + stock + ' units of ' + product['Product Name'] + ' are in stock.', 409);
-    const unitPrice = Number(product['Selling Price'] || 0);
-    const unitCost = Number(product['Unit Cost'] || 0);
+    const unitPrice = Number(product['Selling Price']);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw apiError_('A valid selling price is missing for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
+    const unitCostValue = product['Unit Cost'] === '' ? 0 : Number(product['Unit Cost']);
+    if (!Number.isFinite(unitCostValue) || unitCostValue < 0) throw apiError_('Cost information is invalid for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
     const discount = Number(item.discount || 0);
     if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * quantity) throw apiError_('Discount must be between zero and the item total.', 400);
     return {
       sku: String(product.SKU), name: String(product['Product Name']), category: String(product.Category || ''),
-      quantity: quantity, unitPrice: unitPrice, unitCost: unitCost, discount: discount,
+      quantity: quantity, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
       lineTotal: Math.max(0, quantity * unitPrice - discount),
     };
   });
 
+  if (resolvedLines.length !== items.length || resolvedLines.some(function (line) {
+    return !line.sku || !line.name || !Number.isInteger(line.quantity) || line.quantity < 1 ||
+      !Number.isFinite(line.unitPrice) || line.unitPrice <= 0 || !Number.isFinite(line.lineTotal) || line.lineTotal <= 0;
+  })) throw apiError_('Some bill details are incomplete. Check the cloth, price, and quantity, then try again.', 400);
+  const total = resolvedLines.reduce(function (sum, line) { return sum + line.lineTotal; }, 0);
+  if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
+  if (!String(customer['Customer Name'] || name || '').trim()) throw apiError_('Enter the customer name before saving this bill.', 400);
+
+  // Reserve enough distinct rows for every line before generating a PDF or writing anything.
+  const invoiceRow = nextFreeRow_(invoices);
+  const salesRows = nextFreeRows_(salesItems, resolvedLines.length);
   const number = invoiceNumber_();
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd');
-  const total = resolvedLines.reduce(function (sum, line) { return sum + line.lineTotal; }, 0);
   const invoice = { number: number, date: date, total: total, paymentMode: paymentMode };
   const customerSummary = { name: name || String(customer['Customer Name']), phone: phone };
   let createdPdfId = '';
@@ -391,8 +426,6 @@ function createInvoice_(config, payload, userEmail) {
     createdPdfId = file.id;
     shareInvoice_(file.id, config.authorizedEmails);
 
-    const invoiceRow = nextFreeRow_(invoices);
-    const salesRowStart = nextFreeRow_(salesItems);
     plans.push({
       title: 'Sales Invoices', table: invoices, rowNumber: invoiceRow,
       record: {
@@ -406,7 +439,7 @@ function createInvoice_(config, payload, userEmail) {
     });
     resolvedLines.forEach(function (line, index) {
       plans.push({
-        title: 'Sales Items', table: salesItems, rowNumber: salesRowStart + index,
+        title: 'Sales Items', table: salesItems, rowNumber: salesRows[index],
         record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, Discount: line.discount },
       });
     });
@@ -447,6 +480,16 @@ function nextFreeRow_(table) {
   const occupied = new Set(table.rows.map(function (row) { return row._rowNumber; }));
   for (let rowNumber = 2; rowNumber <= APP.maxRows; rowNumber += 1) if (!occupied.has(rowNumber)) return rowNumber;
   throw apiError_('Tab has reached its current 1,000-row limit.', 409);
+}
+
+function nextFreeRows_(table, count) {
+  const occupied = new Set(table.rows.map(function (row) { return row._rowNumber; }));
+  const available = [];
+  for (let rowNumber = 2; rowNumber <= APP.maxRows && available.length < count; rowNumber += 1) {
+    if (!occupied.has(rowNumber)) available.push(rowNumber);
+  }
+  if (available.length !== count) throw apiError_('There is not enough room for all bill items. Ask the manager to make space in Sales Items.', 409);
+  return available;
 }
 
 function writeRecords_(config, rowPlans, affectedTables) {
