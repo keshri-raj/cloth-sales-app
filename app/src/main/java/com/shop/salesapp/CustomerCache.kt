@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Small on-device index of customer details for fast, exact phone lookups. */
+/** Small on-device index of customer details for fast phone-prefix suggestions. */
 object CustomerCache {
     private const val PREFS = "sales_app_customer_cache"
     private const val KEY_CUSTOMERS = "customers_json"

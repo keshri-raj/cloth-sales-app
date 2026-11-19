@@ -40,7 +40,9 @@ object CustomerHistoryCache {
                         phone = entry.optString("phone"),
                         total = entry.optInt("total"),
                         paymentMode = entry.optString("paymentMode"),
-                        pdfUrl = entry.optString("pdfUrl")
+                        pdfUrl = entry.optString("pdfUrl"),
+                        paid = entry.optInt("paid", if (entry.optString("paymentMode") == "Credit") 0 else entry.optInt("total")),
+                        due = entry.optInt("due", if (entry.optString("paymentMode") == "Credit") entry.optInt("total") else 0)
                     )
                     "request" -> requests += CustomerOrderRequest(
                         number = entry.optString("number"),
@@ -75,6 +77,8 @@ object CustomerHistoryCache {
                         .put("phone", sale.phone)
                         .put("total", sale.total)
                         .put("paymentMode", sale.paymentMode)
+                        .put("paid", sale.paid)
+                        .put("due", sale.due)
                         .put("pdfUrl", sale.pdfUrl)
                 )
             }

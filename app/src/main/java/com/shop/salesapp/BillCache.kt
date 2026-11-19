@@ -26,7 +26,9 @@ object BillCache {
                     phone = row.optString("phone"),
                     total = row.optInt("total"),
                     paymentMode = row.optString("paymentMode"),
-                    pdfUrl = row.optString("pdfUrl")
+                    pdfUrl = row.optString("pdfUrl"),
+                    paid = row.optInt("paid", if (row.optString("paymentMode") == "Credit") 0 else row.optInt("total")),
+                    due = row.optInt("due", if (row.optString("paymentMode") == "Credit") row.optInt("total") else 0)
                 ).takeIf { it.isComplete() }
             }
         }.getOrDefault(emptyList())
@@ -43,6 +45,8 @@ object BillCache {
                     .put("phone", bill.phone)
                     .put("total", bill.total)
                     .put("paymentMode", bill.paymentMode)
+                    .put("paid", bill.paid)
+                    .put("due", bill.due)
                     .put("pdfUrl", bill.pdfUrl)
             )
         }

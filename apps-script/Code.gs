@@ -17,8 +17,9 @@ const APP = {
     Customers: ['Customer ID', 'Customer Name', 'Phone', 'Email', 'City / Address', 'Customer Type', 'Total Orders', 'Total Spent', 'Last Purchase Date'],
     'Sales Invoices': ['Invoice #', 'Date', 'Customer ID', 'Customer Name', 'Items', 'Invoice Total', 'Gross Profit', 'Payment Mode', 'Invoice File', 'Customer Phone'],
     'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit'],
+    Payments: ['Payment ID', 'Date', 'Customer ID', 'Customer Phone', 'Invoice #', 'Amount', 'Payment Method', 'Received By', 'Notes', 'Receipt #', 'Client Request ID'],
   },
-  primaryKey: { Inventory: 'SKU', Customers: 'Customer ID', 'Sales Invoices': 'Invoice #', 'Sales Items': 'Invoice #' },
+  primaryKey: { Inventory: 'SKU', Customers: 'Customer ID', 'Sales Invoices': 'Invoice #', 'Sales Items': 'Invoice #', Payments: 'Payment ID' },
 };
 
 function doGet() {
@@ -42,6 +43,9 @@ function doPost(event) {
       case 'findCustomer':
         result = { customer: findCustomer_(config, String(payload.phone || '')) };
         break;
+      case 'searchCustomers':
+        result = { customers: searchCustomers_(config, String(payload.phone || '')) };
+        break;
       case 'listCustomers':
         result = { customers: listCustomers_(config) };
         break;
@@ -51,8 +55,26 @@ function doPost(event) {
       case 'productImage':
         result = productImage_(payload);
         break;
+      case 'updateProductImage':
+        result = withWriteLock_(function () { return updateProductImage_(config, payload); });
+        break;
       case 'listBills':
         result = { bills: listBills_(config, String(payload.phone || '')) };
+        break;
+      case 'invoicePdf':
+        result = invoicePdf_(config, payload);
+        break;
+      case 'customerFinance':
+        result = customerFinance_(config, String(payload.phone || ''));
+        break;
+      case 'listPayments':
+        result = { payments: listPayments_(config) };
+        break;
+      case 'receivePayment':
+        result = withWriteLock_(function () { return receivePayment_(config, payload, user.email); });
+        break;
+      case 'receiveCustomerPayment':
+        result = withWriteLock_(function () { return receiveCustomerPayment_(config, payload, user.email); });
         break;
       case 'listOrderRequests':
         result = { requests: listOrderRequests_(config, String(payload.phone || '')) };
@@ -174,13 +196,30 @@ function listOrderRequests_(config, phone) {
   const headers = values[0];
   const column = {};
   headers.forEach(function (header, index) { column[header] = index; });
-  return values.slice(1).filter(function (row) { return normalizedPhone_(row[column['Customer Phone']]) === digits; })
-    .reverse().slice(0, 100).map(function (row) {
-      return {
-        number: row[column['Request #']] || '', date: row[column.Date] || '',
-        productName: row[column['Product Name']] || '', quantity: Number(row[column.Quantity] || 0),
-        status: row[column.Status] || '', notes: row[column.Notes] || '',
-      };
+  const grouped = {};
+  values.slice(1).forEach(function (row, index) {
+    if (normalizedPhone_(row[column['Customer Phone']]) !== digits) return;
+    const number = row[column['Request #']] || '';
+    if (!number) return;
+    if (!grouped[number]) grouped[number] = {
+      number: number, date: row[column.Date] || '', items: [], quantity: 0,
+      status: row[column.Status] || '', notes: row[column.Notes] || '', lastRow: index + 2,
+    };
+    const group = grouped[number];
+    const productName = row[column['Product Name']] || '';
+    const quantity = Number(row[column.Quantity] || 0);
+    group.items.push(productName + ' ×' + quantity);
+    group.quantity += quantity;
+  });
+  return Object.keys(grouped).map(function (number) {
+    const group = grouped[number];
+    return {
+      number: group.number, date: group.date, productName: group.items.join(', '),
+      quantity: group.quantity, status: group.status, notes: group.notes, lastRow: group.lastRow,
+    };
+  }).sort(function (a, b) { return b.lastRow - a.lastRow; }).slice(0, 100)
+    .map(function (group) {
+      return { number: group.number, date: group.date, productName: group.productName, quantity: group.quantity, status: group.status, notes: group.notes };
     });
 }
 
@@ -219,6 +258,23 @@ function productImage_(payload) {
   return { data: Utilities.base64Encode(blob.getBytes()), mimeType: blob.getContentType() };
 }
 
+function updateProductImage_(config, payload) {
+  const sku = String(payload.sku || '').trim();
+  const imageBase64 = String(payload.imageBase64 || '');
+  if (!sku) throw apiError_('Choose a product before adding its picture.', 400);
+  if (!imageBase64) throw apiError_('Choose a picture before saving.', 400);
+  ensureProductImageColumn_(config);
+  const table = getTable_(config, 'Inventory');
+  const row = table.rows.find(function (item) { return String(item.SKU || '').trim() === sku; });
+  if (!row) throw apiError_('This product was not found in Shop. Sync products and try again.', 404);
+  const imageId = saveProductImage_(imageBase64, sku);
+  writeRecords_(config, [{
+    title: 'Inventory', table: table, rowNumber: row._rowNumber,
+    record: { 'Image ID': imageId },
+  }], ['Inventory']);
+  return { sku: sku, imageId: imageId };
+}
+
 function findCustomer_(config, phone) {
   const digits = normalizedPhone_(phone);
   if (digits.length < 8) throw apiError_('Enter a valid phone number first.', 400);
@@ -227,18 +283,43 @@ function findCustomer_(config, phone) {
   return row ? mapCustomer_(row) : null;
 }
 
+function searchCustomers_(config, phonePrefix) {
+  const digits = normalizedPhone_(phonePrefix);
+  if (digits.length < 3) return [];
+  return getTable_(config, 'Customers').rows
+    .filter(function (row) { return normalizedPhone_(row.Phone).indexOf(digits) === 0; })
+    .slice(0, 8)
+    .map(mapCustomer_);
+}
+
 function listCustomers_(config) {
   return getTable_(config, 'Customers').rows.map(mapCustomer_);
 }
 
 function createOrderRequest_(config, payload, userEmail) {
-  const productName = String(payload.productName || '').trim();
-  const sku = String(payload.sku || '').trim();
+  const items = Array.isArray(payload.items) ? payload.items : [{
+    productName: payload.productName,
+    sku: payload.sku,
+    quantity: payload.quantity,
+  }];
   const customerPhone = String(payload.customerPhone || '').trim();
-  const quantity = Number(payload.quantity);
-  if (!productName) throw apiError_('Enter the product the customer wants.', 400);
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) throw apiError_('Enter a whole-number quantity greater than zero.', 400);
-  if (customerPhone && normalizedPhone_(customerPhone).length < 8) throw apiError_('Enter a valid customer phone number.', 400);
+  const customerName = String(payload.customerName || '').trim();
+  const phoneDigits = normalizedPhone_(customerPhone);
+  if (phoneDigits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
+  if (!Array.isArray(items) || items.length < 1 || items.length > 100) throw apiError_('Add between 1 and 100 clothes before sending the order.', 400);
+  const resolvedItems = items.map(function (item) {
+    const productName = String(item && item.productName || '').trim();
+    const sku = String(item && item.sku || '').trim();
+    const quantity = Number(item && item.quantity);
+    if (!productName || !sku) throw apiError_('An order item is missing its cloth name or code. Remove it and add it again.', 400);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) throw apiError_('Enter a whole-number quantity greater than zero for ' + productName + '.', 400);
+    return { productName: productName, sku: sku, quantity: quantity };
+  });
+  if (!customerName) {
+    const customers = getTable_(config, 'Customers');
+    const existing = customers.rows.find(function (row) { return normalizedPhone_(row.Phone) === phoneDigits; });
+    if (!existing) throw apiError_('Enter the customer name before sending this order.', 400);
+  }
 
   const headers = ['Request #', 'Date', 'Customer Name', 'Customer Phone', 'SKU', 'Product Name', 'Quantity', 'Notes', 'Status', 'Requested By'];
   const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
@@ -247,20 +328,26 @@ function createOrderRequest_(config, payload, userEmail) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
+  if (sheet.getLastRow() + resolvedItems.length > APP.maxRows) throw apiError_('The Order Requests tab is full. Ask the manager to make space.', 409);
+
+  const customers = getTable_(config, 'Customers');
+  let customer = customers.rows.find(function (row) { return normalizedPhone_(row.Phone) === phoneDigits; });
+  if (!customer) {
+    const created = createCustomer_(config, {
+      name: customerName,
+      phone: customerPhone,
+      email: String(payload.customerEmail || '').trim(),
+      address: String(payload.customerAddress || '').trim(),
+    });
+    customer = { 'Customer Name': created.name };
+  }
   const requestNumber = newId_('REQ');
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss');
-  sheet.appendRow([
-    requestNumber,
-    date,
-    String(payload.customerName || '').trim(),
-    customerPhone,
-    sku,
-    productName,
-    quantity,
-    String(payload.notes || '').trim(),
-    'Pending',
-    userEmail,
-  ]);
+  const rows = resolvedItems.map(function (item) { return [
+    requestNumber, date, String(customer['Customer Name'] || customerName), customerPhone,
+    item.sku, item.productName, item.quantity, String(payload.notes || '').trim(), 'Pending', userEmail,
+  ]; });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
   return { requestNumber: requestNumber, status: 'Pending' };
 }
 
@@ -270,6 +357,8 @@ function listBills_(config, phone) {
   const invoices = getTable_(config, 'Sales Invoices');
   const customers = getTable_(config, 'Customers');
   const salesItems = getTable_(config, 'Sales Items');
+  const payments = readPaymentsTable_(config);
+  const paidByInvoice = paymentsByInvoice_(payments);
   const customerById = {};
   customers.rows.forEach(function (row) { customerById[String(row['Customer ID'])] = row; });
   const itemsByInvoice = {};
@@ -287,7 +376,7 @@ function listBills_(config, phone) {
       const customerPhone = normalizedPhone_(row['Customer Phone']);
       const total = Number(row['Invoice Total']);
       const paymentMode = String(row['Payment Mode'] || '').trim();
-      return invoiceNumber && customerPhone.length >= 8 && Number.isFinite(total) && total > 0 &&
+        return invoiceNumber && customerPhone.length >= 8 && Number.isFinite(total) && total > 0 &&
         (itemsByInvoice[invoiceNumber] || 0) > 0 && ['Cash', 'UPI', 'Card', 'Credit'].includes(paymentMode) &&
         (!digits || customerPhone === digits);
     })
@@ -295,6 +384,11 @@ function listBills_(config, phone) {
     .slice(0, 100)
     .map(function (row) {
       const customer = customerById[String(row['Customer ID'])] || {};
+      const invoiceNumber = String(row['Invoice #'] || '');
+      const total = Number(row['Invoice Total'] || 0);
+      const paid = paidByInvoice[invoiceNumber] !== undefined
+        ? paidByInvoice[invoiceNumber]
+        : (String(row['Payment Mode'] || '').trim() === 'Credit' ? 0 : total);
       const dateValue = row.Date;
       const date = typeof dateValue === 'number'
         ? Utilities.formatDate(new Date(Date.UTC(1899, 11, 30) + dateValue * 86400000), APP.timeZone, 'yyyy-MM-dd')
@@ -304,11 +398,353 @@ function listBills_(config, phone) {
         date: date,
         customerName: String(row['Customer Name'] || customer['Customer Name'] || ''),
         phone: String(row['Customer Phone'] || customer.Phone || ''),
-        total: Number(row['Invoice Total'] || 0),
+        total: total,
         paymentMode: String(row['Payment Mode'] || ''),
         pdfUrl: String(row['Invoice File'] || ''),
+        paid: Math.min(total, paid),
+        due: Math.max(0, total - paid),
       };
     });
+}
+
+function invoicePdf_(config, payload) {
+  const invoiceNumber = String(payload.invoiceNumber || '').trim();
+  if (!invoiceNumber) throw apiError_('Choose a bill before sharing its PDF.', 400);
+  const invoiceRow = getTable_(config, 'Sales Invoices').rows.find(function (row) {
+    return String(row['Invoice #'] || '').trim() === invoiceNumber;
+  });
+  if (!invoiceRow) throw apiError_('This bill was not found in Shop. Sync bills and try again.', 404);
+  const fileUrl = String(invoiceRow['Invoice File'] || '').trim();
+  const match = fileUrl.match(/\/file\/d\/([A-Za-z0-9_-]+)/) || fileUrl.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (!match) throw apiError_('The PDF link for this bill is missing. Ask the manager to check the invoice.', 404);
+  const fileId = match[1];
+  const metadata = Drive.Files.get(fileId, { fields: 'id,mimeType,parents,name' });
+  if (metadata.mimeType !== 'application/pdf' || !Array.isArray(metadata.parents) || metadata.parents.indexOf(config.invoiceFolderId) < 0) {
+    throw apiError_('The bill PDF is not available in the private invoice folder.', 404);
+  }
+  const total = Number(invoiceRow['Invoice Total'] || 0);
+  const payments = readPaymentsTable_(config);
+  const paidByInvoice = paymentsByInvoice_(payments);
+  const recordedPaid = paidByInvoice[invoiceNumber] !== undefined
+    ? paidByInvoice[invoiceNumber]
+    : (String(invoiceRow['Payment Mode'] || '').trim() === 'Credit' ? 0 : total);
+  const paid = Math.min(total, recordedPaid);
+  const dateValue = invoiceRow.Date;
+  const date = typeof dateValue === 'number'
+    ? Utilities.formatDate(new Date(Date.UTC(1899, 11, 30) + dateValue * 86400000), APP.timeZone, 'yyyy-MM-dd')
+    : String(dateValue || '');
+  const itemRows = getTable_(config, 'Sales Items').rows.filter(function (row) {
+    return String(row['Invoice #'] || '').trim() === invoiceNumber;
+  });
+  const lines = itemRows.map(function (row) {
+    const quantity = Number(row.Quantity || 0);
+    const unitPrice = Number(row['Unit Price'] || 0);
+    const discount = Number(row.Discount || 0);
+    return {
+      sku: String(row.SKU || ''), name: String(row['Product Name'] || ''), category: String(row.Category || ''),
+      quantity: quantity, unitPrice: unitPrice, unitCost: 0, discount: discount,
+      lineTotal: Number(row['Line Total'] || Math.max(0, quantity * unitPrice - discount)),
+    };
+  });
+  if (!lines.length || lines.some(function (line) { return !line.name || line.quantity < 1 || line.unitPrice <= 0; })) {
+    throw apiError_('Bill items are incomplete, so its PDF cannot be refreshed. Ask the manager to check this bill.', 409);
+  }
+  const invoice = {
+    number: invoiceNumber, date: date, total: total,
+    paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
+  };
+  const customer = { name: String(invoiceRow['Customer Name'] || ''), phone: String(invoiceRow['Customer Phone'] || '') };
+  const pdf = buildInvoicePdf_(invoice, customer, lines);
+  Drive.Files.update({ name: invoiceNumber + '.pdf' }, fileId, pdf, { fields: 'id,mimeType,parents,name' });
+  const bytes = pdf.getBytes();
+  if (bytes.length > 4 * 1024 * 1024) throw apiError_('This bill PDF is too large to share from the phone.', 413);
+  return {
+    fileName: invoiceNumber + '.pdf',
+    mimeType: 'application/pdf',
+    data: Utilities.base64Encode(bytes),
+  };
+}
+
+function customerFinance_(config, phone) {
+  const digits = normalizedPhone_(phone);
+  if (digits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
+  const invoices = getTable_(config, 'Sales Invoices').rows.filter(function (row) {
+    const total = Number(row['Invoice Total']);
+    return normalizedPhone_(row['Customer Phone']) === digits && String(row['Invoice #'] || '').trim() && Number.isFinite(total) && total > 0;
+  });
+  const payments = readPaymentsTable_(config);
+  const paidByInvoice = paymentsByInvoice_(payments);
+  let totalPurchases = 0;
+  let totalPaid = 0;
+  invoices.forEach(function (row) {
+    const number = String(row['Invoice #']);
+    const total = Number(row['Invoice Total']);
+    const paid = paidByInvoice[number] !== undefined
+      ? paidByInvoice[number]
+      : (String(row['Payment Mode'] || '').trim() === 'Credit' ? 0 : total);
+    totalPurchases += total;
+    totalPaid += Math.min(total, paid);
+  });
+  const customerId = invoices.length ? String(invoices[0]['Customer ID'] || '') : '';
+  const receiptGroups = {};
+  (payments ? payments.rows : [])
+    .filter(function (row) { return normalizedPhone_(row['Customer Phone']) === digits && Number(row.Amount) > 0; })
+    .forEach(function (row) {
+      const receiptNumber = String(row['Receipt #'] || row['Payment ID'] || '');
+      if (!receiptGroups[receiptNumber]) receiptGroups[receiptNumber] = {
+        id: receiptNumber, receiptNumber: receiptNumber, date: String(row.Date || ''),
+        invoiceNumbers: [], amount: 0, method: String(row['Payment Method'] || ''),
+        note: String(row.Notes || ''), requestId: String(row['Client Request ID'] || ''), lastRow: row._rowNumber,
+      };
+      const receipt = receiptGroups[receiptNumber];
+      const invoiceNumber = String(row['Invoice #'] || '');
+      if (invoiceNumber && receipt.invoiceNumbers.indexOf(invoiceNumber) < 0) receipt.invoiceNumbers.push(invoiceNumber);
+      receipt.amount += Number(row.Amount || 0);
+      receipt.lastRow = Math.max(receipt.lastRow, row._rowNumber);
+    });
+  const recentPayments = Object.keys(receiptGroups).map(function (key) { return receiptGroups[key]; })
+    .sort(function (a, b) { return b.lastRow - a.lastRow; })
+    .slice(0, 50)
+    .map(function (receipt) {
+      return {
+        id: receipt.id, receiptNumber: receipt.receiptNumber, date: receipt.date,
+        invoiceNumber: receipt.invoiceNumbers.join(', '), amount: receipt.amount,
+        method: receipt.method, note: receipt.note, requestId: receipt.requestId,
+      };
+    });
+  return {
+    summary: {
+      totalPurchases: totalPurchases,
+      totalPaid: totalPaid,
+      currentDue: Math.max(0, totalPurchases - totalPaid),
+      invoiceCount: invoices.length,
+      customerId: customerId,
+    },
+    payments: recentPayments,
+  };
+}
+
+function listPayments_(config) {
+  const payments = readPaymentsTable_(config);
+  if (!payments) return [];
+  const customersByPhone = {};
+  getTable_(config, 'Customers').rows.forEach(function (row) {
+    customersByPhone[normalizedPhone_(row.Phone)] = String(row['Customer Name'] || '');
+  });
+  const groups = {};
+  payments.rows.filter(function (row) { return Number(row.Amount) > 0; }).forEach(function (row) {
+    const receiptNumber = String(row['Receipt #'] || row['Payment ID'] || '');
+    if (!groups[receiptNumber]) groups[receiptNumber] = {
+      id: receiptNumber, receiptNumber: receiptNumber, date: String(row.Date || ''),
+      customerName: customersByPhone[normalizedPhone_(row['Customer Phone'])] || '',
+      customerPhone: String(row['Customer Phone'] || ''), invoiceNumbers: [], amount: 0,
+      method: String(row['Payment Method'] || ''), note: String(row.Notes || ''),
+      requestId: String(row['Client Request ID'] || ''), lastRow: row._rowNumber,
+    };
+    const group = groups[receiptNumber];
+    const invoiceNumber = String(row['Invoice #'] || '').trim();
+    if (invoiceNumber && group.invoiceNumbers.indexOf(invoiceNumber) < 0) group.invoiceNumbers.push(invoiceNumber);
+    group.amount += Number(row.Amount || 0);
+    group.lastRow = Math.max(group.lastRow, row._rowNumber);
+  });
+  return Object.keys(groups).map(function (key) { return groups[key]; })
+    .sort(function (a, b) { return b.lastRow - a.lastRow; })
+    .slice(0, 200)
+    .map(function (group) {
+      return {
+        id: group.id, receiptNumber: group.receiptNumber, date: group.date,
+        customerName: group.customerName, customerPhone: group.customerPhone,
+        invoiceNumber: group.invoiceNumbers.join(', '), amount: group.amount,
+        method: group.method, note: group.note, requestId: group.requestId,
+      };
+    });
+}
+
+function receivePayment_(config, payload, userEmail) {
+  const phone = String(payload.phone || '').trim();
+  const digits = normalizedPhone_(phone);
+  const invoiceNumber = String(payload.invoiceNumber || '').trim();
+  const amount = Number(payload.amount);
+  const method = String(payload.method || '').trim();
+  const requestId = paymentRequestId_(payload.requestId);
+  if (digits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
+  if (!invoiceNumber) throw apiError_('Choose the bill this payment is for.', 400);
+  if (!Number.isInteger(amount) || amount < 1) throw apiError_('Enter a whole-number payment amount greater than zero.', 400);
+  if (!['Cash', 'UPI', 'Card'].includes(method)) throw apiError_('Choose Cash, UPI, or Card for this payment.', 400);
+
+  const invoices = getTable_(config, 'Sales Invoices');
+  const invoice = invoices.rows.find(function (row) {
+    return String(row['Invoice #'] || '').trim() === invoiceNumber && normalizedPhone_(row['Customer Phone']) === digits;
+  });
+  if (!invoice) throw apiError_('That bill was not found for this customer.', 404);
+  const total = Number(invoice['Invoice Total']);
+  if (!Number.isFinite(total) || total <= 0) throw apiError_('This bill does not have a valid total.', 400);
+  const payments = ensurePaymentsTable_(config);
+  const previousRows = payments.rows.filter(function (row) { return String(row['Client Request ID'] || '') === requestId; });
+  if (previousRows.length) {
+    const existing = previousRows[0];
+    if (String(existing['Invoice #'] || '').trim() !== invoiceNumber || normalizedPhone_(existing['Customer Phone']) !== digits) {
+      throw apiError_('This payment reference was already used for a different bill.', 409);
+    }
+    const recordedAmount = payments.rows.filter(function (row) { return String(row['Invoice #'] || '').trim() === invoiceNumber; })
+      .reduce(function (sum, row) { return sum + Number(row.Amount || 0); }, 0);
+    return {
+      payment: {
+        id: existing['Payment ID'], receiptNumber: existing['Receipt #'], date: existing.Date,
+        invoiceNumber: existing['Invoice #'], amount: Number(existing.Amount || amount),
+        method: existing['Payment Method'], note: existing.Notes, requestId: requestId,
+      },
+      invoiceDue: Math.max(0, total - recordedAmount),
+    };
+  }
+  const invoicePaymentRows = payments.rows.filter(function (row) { return String(row['Invoice #'] || '').trim() === invoiceNumber; });
+  const recordedAmount = invoicePaymentRows.reduce(function (sum, row) { return sum + Number(row.Amount || 0); }, 0);
+  const alreadyPaid = invoicePaymentRows.length ? recordedAmount
+    : (String(invoice['Payment Mode'] || '').trim() === 'Credit' ? 0 : total);
+  const due = Math.max(0, total - alreadyPaid);
+  if (due <= 0) throw apiError_('This bill is already paid in full.', 409);
+  if (amount > due) throw apiError_('Payment is greater than the current due of ₹' + due + '.', 400);
+  const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss');
+  const receiptNumber = newId_('RCPT');
+  const payment = {
+    'Payment ID': newId_('PAY'), Date: date,
+    'Customer ID': String(invoice['Customer ID'] || ''), 'Customer Phone': phone,
+    'Invoice #': invoiceNumber, Amount: amount, 'Payment Method': method,
+    'Received By': userEmail, Notes: String(payload.note || '').trim(), 'Receipt #': receiptNumber,
+    'Client Request ID': requestId,
+  };
+  writeRecords_(config, [{ title: 'Payments', table: payments, rowNumber: nextFreeRow_(payments), record: payment }], ['Payments']);
+  return {
+    payment: {
+      id: payment['Payment ID'], receiptNumber: receiptNumber, date: date, invoiceNumber: invoiceNumber,
+      amount: amount, method: method, note: payment.Notes, requestId: requestId,
+    },
+    invoiceDue: due - amount,
+  };
+}
+
+function ensurePaymentsTable_(config) {
+  const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
+  let sheet = spreadsheet.getSheetByName('Payments');
+  if (!sheet) sheet = spreadsheet.insertSheet('Payments');
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, APP.sheets.Payments.length).setValues([APP.sheets.Payments]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  } else {
+    const width = Math.max(1, sheet.getLastColumn());
+    const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+    APP.sheets.Payments.forEach(function (header) {
+      if (headers.indexOf(header) < 0) {
+        const nextColumn = sheet.getLastColumn() + 1;
+        sheet.getRange(1, nextColumn).setValue(header).setFontWeight('bold');
+        headers.push(header);
+      }
+    });
+  }
+  return getTable_(config, 'Payments');
+}
+
+function readPaymentsTable_(config) {
+  const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
+  return spreadsheet.getSheetByName('Payments') ? ensurePaymentsTable_(config) : null;
+}
+
+function receiveCustomerPayment_(config, payload, userEmail) {
+  const phone = String(payload.phone || '').trim();
+  const digits = normalizedPhone_(phone);
+  const amount = Number(payload.amount);
+  const method = String(payload.method || '').trim();
+  const requestId = paymentRequestId_(payload.requestId);
+  if (digits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
+  if (!Number.isInteger(amount) || amount < 1) throw apiError_('Enter a whole-number payment amount greater than zero.', 400);
+  if (!['Cash', 'UPI', 'Card'].includes(method)) throw apiError_('Choose Cash, UPI, or Card for this payment.', 400);
+
+  const invoices = getTable_(config, 'Sales Invoices');
+  const payments = ensurePaymentsTable_(config);
+  const paidByInvoice = paymentsByInvoice_(payments);
+  const previousRows = payments.rows.filter(function (row) { return String(row['Client Request ID'] || '') === requestId; });
+  if (previousRows.length) {
+    if (previousRows.some(function (row) { return normalizedPhone_(row['Customer Phone']) !== digits; })) {
+      throw apiError_('This payment reference was already used for a different customer.', 409);
+    }
+    const invoiceMap = {};
+    previousRows.forEach(function (row) {
+      const number = String(row['Invoice #'] || '').trim();
+      if (number) invoiceMap[number] = (invoiceMap[number] || 0) + Number(row.Amount || 0);
+    });
+    const allocations = Object.keys(invoiceMap).map(function (number) {
+      const invoice = invoices.rows.find(function (row) { return String(row['Invoice #'] || '').trim() === number; });
+      const total = invoice ? Number(invoice['Invoice Total'] || 0) : 0;
+      return { invoiceNumber: number, amount: invoiceMap[number], dueAfter: Math.max(0, total - Number(paidByInvoice[number] || 0)) };
+    });
+    return {
+      receiptNumber: previousRows[0]['Receipt #'], requestId: requestId,
+      date: previousRows[0].Date, amount: previousRows.reduce(function (sum, row) { return sum + Number(row.Amount || 0); }, 0),
+      method: previousRows[0]['Payment Method'], note: previousRows[0].Notes,
+      allocations: allocations,
+    };
+  }
+  const candidates = invoices.rows
+    .filter(function (row) { return normalizedPhone_(row['Customer Phone']) === digits && String(row['Invoice #'] || '').trim(); })
+    .map(function (row) {
+      const total = Number(row['Invoice Total']);
+      if (!Number.isFinite(total) || total <= 0) return null;
+      const number = String(row['Invoice #']);
+      const rows = payments.rows.filter(function (payment) { return String(payment['Invoice #'] || '').trim() === number; });
+      const paid = paidByInvoice[number] !== undefined ? paidByInvoice[number]
+        : (String(row['Payment Mode'] || '').trim() === 'Credit' ? 0 : total);
+      return { row: row, number: number, total: total, due: Math.max(0, total - paid) };
+    })
+    .filter(function (candidate) { return candidate && candidate.due > 0; })
+    .sort(function (a, b) { return a.row._rowNumber - b.row._rowNumber; });
+  const totalDue = candidates.reduce(function (sum, candidate) { return sum + candidate.due; }, 0);
+  if (totalDue <= 0) throw apiError_('This customer has no unpaid bills.', 409);
+  if (amount > totalDue) throw apiError_('Payment is greater than the customer due of ₹' + totalDue + '.', 400);
+
+  const receiptNumber = newId_('RCPT');
+  const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss');
+  let remaining = amount;
+  const allocations = [];
+  candidates.forEach(function (candidate) {
+    if (remaining <= 0) return;
+    const allocated = Math.min(candidate.due, remaining);
+    allocations.push({ candidate: candidate, amount: allocated });
+    remaining -= allocated;
+  });
+  const rows = nextFreeRows_(payments, allocations.length);
+  const note = String(payload.note || '').trim();
+  const plans = allocations.map(function (allocation, index) {
+    return {
+      title: 'Payments', table: payments, rowNumber: rows[index],
+      record: {
+        'Payment ID': newId_('PAY'), Date: date,
+        'Customer ID': String(allocation.candidate.row['Customer ID'] || ''), 'Customer Phone': phone,
+        'Invoice #': allocation.candidate.number, Amount: allocation.amount, 'Payment Method': method,
+        'Received By': userEmail, Notes: note || 'Customer payment allocated to oldest due bills', 'Receipt #': receiptNumber,
+        'Client Request ID': requestId,
+      },
+    };
+  });
+  writeRecords_(config, plans, ['Payments']);
+  return { receiptNumber: receiptNumber, requestId: requestId, date: date, amount: amount, method: method, note: note, allocations: allocations.map(function (allocation) {
+    return { invoiceNumber: allocation.candidate.number, amount: allocation.amount, dueAfter: allocation.candidate.due - allocation.amount };
+  }) };
+}
+
+function paymentRequestId_(value) {
+  const requestId = String(value || '').trim() || newId_('CLIENT');
+  if (requestId.length > 120) throw apiError_('The payment reference is invalid. Try again.', 400);
+  return requestId;
+}
+
+function paymentsByInvoice_(table) {
+  const result = {};
+  (table ? table.rows : []).forEach(function (row) {
+    const invoiceNumber = String(row['Invoice #'] || '').trim();
+    const amount = Number(row.Amount);
+    if (invoiceNumber && Number.isFinite(amount) && amount > 0) result[invoiceNumber] = (result[invoiceNumber] || 0) + amount;
+  });
+  return result;
 }
 
 function createProduct_(config, payload) {
@@ -351,7 +787,7 @@ function createInvoice_(config, payload, userEmail) {
   const paymentMode = String(payload.paymentMode || '').trim();
   const items = payload.items;
   if (normalizedPhone_(phone).length < 8) throw apiError_('Enter a valid customer phone number.', 400);
-  if (!['Cash', 'UPI', 'Card'].includes(paymentMode)) throw apiError_('Choose Cash, UPI, or Card.', 400);
+  if (!['Cash', 'UPI', 'Card', 'Credit'].includes(paymentMode)) throw apiError_('Choose Cash, UPI, Card, or Credit.', 400);
   if (!Array.isArray(items) || items.length === 0 || items.length > 100) throw apiError_('Add between 1 and 100 clothes before saving the bill.', 400);
   if (items.some(function (item) { return !item || typeof item !== 'object' || !String(item.sku || '').trim(); })) {
     throw apiError_('One or more bill items are missing a cloth code. Remove the incomplete item and add it again.', 400);
@@ -407,13 +843,24 @@ function createInvoice_(config, payload, userEmail) {
   const total = resolvedLines.reduce(function (sum, line) { return sum + line.lineTotal; }, 0);
   if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
   if (!String(customer['Customer Name'] || name || '').trim()) throw apiError_('Enter the customer name before saving this bill.', 400);
+  const amountReceived = paymentMode === 'Credit' ? Number(payload.amountReceived || 0) : total;
+  const paymentMethod = paymentMode === 'Credit' ? String(payload.paymentMethod || 'Cash').trim() : paymentMode;
+  if (!Number.isInteger(amountReceived) || amountReceived < 0 || amountReceived > total) {
+    throw apiError_('Amount received must be between ₹0 and the bill total of ₹' + total + '.', 400);
+  }
+  if (amountReceived > 0 && !['Cash', 'UPI', 'Card'].includes(paymentMethod)) throw apiError_('Choose Cash, UPI, or Card for the amount received.', 400);
+  const due = total - amountReceived;
+  const savedPaymentMode = due > 0 ? 'Credit' : paymentMethod;
+  const paymentTable = ensurePaymentsTable_(config);
 
   // Reserve enough distinct rows for every line before generating a PDF or writing anything.
   const invoiceRow = nextFreeRow_(invoices);
   const salesRows = nextFreeRows_(salesItems, resolvedLines.length);
+  const paymentRow = amountReceived > 0 ? nextFreeRow_(paymentTable) : 0;
+  const receiptNumber = amountReceived > 0 ? newId_('RCPT') : '';
   const number = invoiceNumber_();
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd');
-  const invoice = { number: number, date: date, total: total, paymentMode: paymentMode };
+  const invoice = { number: number, date: date, total: total, paymentMode: savedPaymentMode, paid: amountReceived, due: due };
   const customerSummary = { name: name || String(customer['Customer Name']), phone: phone };
   let createdPdfId = '';
   try {
@@ -432,7 +879,7 @@ function createInvoice_(config, payload, userEmail) {
         'Invoice #': number,
         Date: dateSerial_(date),
         'Customer ID': customer['Customer ID'],
-        'Payment Mode': paymentMode,
+        'Payment Mode': savedPaymentMode,
         'Invoice File': file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view',
         'Customer Phone': phone,
       },
@@ -443,9 +890,20 @@ function createInvoice_(config, payload, userEmail) {
         record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, Discount: line.discount },
       });
     });
-    writeRecords_(config, plans, ['Inventory', 'Customers', 'Sales Invoices', 'Sales Items']);
+    if (amountReceived > 0) {
+      plans.push({
+        title: 'Payments', table: paymentTable, rowNumber: paymentRow,
+        record: {
+          'Payment ID': newId_('PAY'), Date: Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss'),
+          'Customer ID': String(customer['Customer ID']), 'Customer Phone': phone,
+          'Invoice #': number, Amount: amountReceived, 'Payment Method': paymentMethod,
+          'Received By': userEmail, Notes: 'Initial payment at bill creation', 'Receipt #': receiptNumber,
+        },
+      });
+    }
+    writeRecords_(config, plans, ['Inventory', 'Customers', 'Sales Invoices', 'Sales Items', 'Payments']);
     createdPdfId = '';
-    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, total: total, pdfUrl: file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view' };
+    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, total: total, paid: amountReceived, due: due, paymentMode: savedPaymentMode, pdfUrl: file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view' };
   } catch (error) {
     if (createdPdfId) {
       try { Drive.Files.delete(createdPdfId); } catch (cleanupError) { console.error(cleanupError); }
@@ -591,15 +1049,17 @@ function formulasForRow_(title, row) {
 
 function buildInvoicePdf_(invoice, customer, lines) {
   const escape = function (value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]; }); };
+  const status = invoice.due > 0 ? 'DUE' : 'PAID';
+  const statusColor = invoice.due > 0 ? '#c62828' : '#2e7d32';
   const bodyRows = lines.map(function (line) {
     return '<tr><td>' + escape(line.name) + '</td><td class="num">' + line.quantity + '</td><td class="num">₹' + line.unitPrice.toFixed(2) + '</td><td class="num">₹' + line.lineTotal.toFixed(2) + '</td></tr>';
   }).join('');
   const html = '<!doctype html><html><head><meta charset="utf-8"><style>' +
-    'body{font-family:Arial,sans-serif;color:#153447;margin:36px}h1{text-align:center;color:#147d78;font-size:24px;margin:0} .muted{text-align:center;color:#62747a;margin:8px 0 28px} .customer{margin:24px 0}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{padding:10px 8px;border-bottom:1px solid #d7e2e1;text-align:left}th{background:#edf4f3}.num{text-align:right}.total{text-align:right;color:#147d78;font-size:18px;font-weight:bold;margin-top:24px}.thanks{text-align:center;color:#62747a;margin-top:48px}' +
-    '</style></head><body><h1>SALES INVOICE</h1><div class="muted">' + escape(invoice.number) + ' · ' + escape(invoice.date) + '</div>' +
-    '<div class="customer"><b>Customer</b><br>' + escape(customer.name || 'Walk-in customer') + '<br>' + escape(customer.phone) + '<br>Payment: ' + escape(invoice.paymentMode) + '</div>' +
+    'body{font-family:Arial,sans-serif;color:#153447;margin:36px}.watermark{position:fixed;top:42%;left:8%;width:84%;text-align:center;transform:rotate(-28deg);font-size:70px;font-weight:bold;letter-spacing:10px;color:' + statusColor + ';border:6px solid ' + statusColor + ';border-radius:12px;opacity:.14;padding:10px 0;z-index:0}.content{position:relative;z-index:1}h1{text-align:center;color:#147d78;font-size:24px;margin:0}.muted{text-align:center;color:#62747a;margin:8px 0 28px}.customer{margin:24px 0}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{padding:10px 8px;border-bottom:1px solid #d7e2e1;text-align:left}th{background:#edf4f3}.num{text-align:right}.total{text-align:right;color:#147d78;font-size:18px;font-weight:bold;margin-top:24px}.thanks{text-align:center;color:#62747a;margin-top:48px}' +
+    '</style></head><body><div class="watermark">' + status + '</div><div class="content"><h1>SALES INVOICE</h1><div class="muted">' + escape(invoice.number) + ' · ' + escape(invoice.date) + '</div>' +
+    '<div class="customer"><b>Customer</b><br>' + escape(customer.name || 'Walk-in customer') + '<br>' + escape(customer.phone) + '<br>Payment: ' + escape(invoice.paymentMode) + '<br>Paid: ₹' + invoice.paid.toFixed(2) + '<br>Balance due: ₹' + invoice.due.toFixed(2) + '</div>' +
     '<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead><tbody>' + bodyRows + '</tbody></table>' +
-    '<div class="total">TOTAL&nbsp;&nbsp; ₹' + invoice.total.toFixed(2) + '</div><div class="thanks">Thank you for shopping with us.</div></body></html>';
+    '<div class="total">TOTAL&nbsp;&nbsp; ₹' + invoice.total.toFixed(2) + '</div><div class="thanks">Thank you for shopping with us.</div></div></body></html>';
   return HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF).setName(invoice.number + '.pdf');
 }
 

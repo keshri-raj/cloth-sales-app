@@ -8,22 +8,22 @@ This is the lower-cost backend option for the native Android app. It reads and u
 
 - Google Cloud project: `Sales App` (`sales-app-515120`, project number `866971493231`).
 - OAuth consent screen: External, Testing mode.
-- Test user: `keshrirajcp@gmail.com`.
+- OAuth test users: `keshrirajcp@gmail.com`, `munnisbv@gmail.com`.
 - Android OAuth client: package `com.shop.salesapp`, debug signing certificate registered.
 - Web/server OAuth client ID: `866971493231-c6k2bc9kvutjsdasqbt45iqvvvd7v0b1.apps.googleusercontent.com`.
-- A standalone Apps Script project was created at `https://script.google.com/home/projects/1s_jnVs5E7f9GNY7hzk4-KNCQvOLyOSOQd6bu5tJEFJ7NvCpRrnnv02dd/edit`, but its source and deployment still need to be completed in the Apps Script editor.
+- A standalone Apps Script project is deployed at `https://script.google.com/home/projects/1s_jnVs5E7f9GNY7hzk4-KNCQvOLyOSOQd6bu5tJEFJ7NvCpRrnnv02dd/edit`.
 
 1. In the Apps Script project above, add the `Code.gs` and `appsscript.json` files from this folder. In **Project Settings**, enable **Show `appsscript.json` manifest file** and replace the generated manifest.
 2. In **Project Settings → Script Properties**, add:
    - `SHOP_SPREADSHEET_ID`: the ID of the existing Shop spreadsheet.
    - `GOOGLE_OAUTH_CLIENT_ID`: `866971493231-c6k2bc9kvutjsdasqbt45iqvvvd7v0b1.apps.googleusercontent.com`.
-   - `AUTHORIZED_EMAILS`: `keshrirajcp@gmail.com` for the initial rollout. Add sales staff here when their accounts are approved.
+   - `AUTHORIZED_EMAILS`: `keshrirajcp@gmail.com,munnisbv@gmail.com`. Add sales staff here when their accounts are approved, and add each account to the Google OAuth test users while the app remains in Testing mode.
 3. In **Services**, add the Advanced Google services **Drive API** and **Google Sheets API**. Enable the same APIs in the script's linked Google Cloud project if prompted.
 4. Run `setupInvoiceFolder` once from the editor and authorize the requested scopes. It creates a private `Sales App Invoices` folder using the script owner's Drive and saves its ID as `INVOICE_FOLDER_ID`.
 5. Deploy as **Web app**, executing as the script owner. The deployment access setting must allow the Android app's HTTPS request to reach `doPost`; the endpoint then verifies the Google ID token's audience, verified email, and staff allowlist on every call. Do not share edit access to the script project with sales users.
 6. Copy the deployed `/exec` URL into `shop.api.baseUrl` in the ignored Android `local.properties`. The Web/server client ID is already set in `google.server.clientId`. Rebuild the Android app.
 
-`doPost` accepts JSON actions (`products`, `findCustomer`, `createProduct`, `createInvoice`). It returns JSON envelopes because Apps Script web apps do not let a script choose arbitrary HTTP status codes. The Android client follows Apps Script's content redirect.
+`doPost` accepts JSON actions including `products`, `findCustomer`, `searchCustomers`, `customerFinance`, `createProduct`, `createInvoice`, `invoicePdf`, `receivePayment`, and `receiveCustomerPayment`. Credit invoices record any amount received when the bill is created. Receipts may be posted against one bill or against the customer's total due; customer-level receipts allocate to the oldest unpaid bills first and record each allocation in `Payments` under one receipt number. The backend creates or updates the `Payments` tab and its headers automatically. Customer summaries derive total purchases, total received, and current due from invoice and payment records. The `invoicePdf` action checks that the requested invoice exists and its PDF belongs to the private invoice folder, then returns the PDF bytes to the signed-in app so Android can share the attachment through WhatsApp or another installed app. It returns JSON envelopes because Apps Script web apps do not let a script choose arbitrary HTTP status codes. The Android client follows Apps Script's content redirect.
 
 ## Authentication note
 
