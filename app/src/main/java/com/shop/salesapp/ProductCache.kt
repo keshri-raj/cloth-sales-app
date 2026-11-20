@@ -24,8 +24,10 @@ object ProductCache {
                     name = name,
                     category = row.optString("category"),
                     price = row.optDouble("price").toInt(),
-                    stock = row.optDouble("stock").toInt(),
-                    imageId = row.optString("imageId")
+                    stock = row.optDouble("stock"),
+                    imageId = row.optString("imageId"),
+                    available = row.optBoolean("available", true),
+                    fractionalQuantity = row.optBoolean("fractionalQuantity", false)
                 )
             }
         }.getOrDefault(emptyList())
@@ -42,6 +44,8 @@ object ProductCache {
                     .put("price", product.price)
                     .put("stock", product.stock)
                     .put("imageId", product.imageId)
+                    .put("available", product.available)
+                    .put("fractionalQuantity", product.fractionalQuantity)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

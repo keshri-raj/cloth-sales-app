@@ -42,16 +42,28 @@ object CustomerHistoryCache {
                         paymentMode = entry.optString("paymentMode"),
                         pdfUrl = entry.optString("pdfUrl"),
                         paid = entry.optInt("paid", if (entry.optString("paymentMode") == "Credit") 0 else entry.optInt("total")),
-                        due = entry.optInt("due", if (entry.optString("paymentMode") == "Credit") entry.optInt("total") else 0)
+                        due = entry.optInt("due", if (entry.optString("paymentMode") == "Credit") entry.optInt("total") else 0),
+                        items = (0 until (entry.optJSONArray("items")?.length() ?: 0)).mapNotNull { itemIndex ->
+                            val item = entry.optJSONArray("items")?.optJSONObject(itemIndex) ?: return@mapNotNull null
+                            InvoiceLine(item.optString("sku"), item.optString("name"), item.optString("category"), item.optDouble("quantity"), item.optInt("unitPrice"), item.optInt("discount"), item.optInt("lineTotal"), item.optBoolean("voided", false), item.optBoolean("fractionalQuantity", false))
+                        }
                     )
-                    "request" -> requests += CustomerOrderRequest(
-                        number = entry.optString("number"),
-                        date = entry.optString("date"),
-                        productName = entry.optString("productName"),
-                        quantity = entry.optInt("quantity"),
-                        status = entry.optString("status"),
-                        notes = entry.optString("notes")
-                    )
+                    "request" -> {
+                        val itemRows = entry.optJSONArray("items") ?: JSONArray()
+                        val items = (0 until itemRows.length()).mapNotNull { itemIndex ->
+                            val item = itemRows.optJSONObject(itemIndex) ?: return@mapNotNull null
+                            OrderRequestItem(item.optString("name"), item.optString("sku"), item.optDouble("quantity"))
+                        }
+                        requests += CustomerOrderRequest(
+                            number = entry.optString("number"),
+                            date = entry.optString("date"),
+                            productName = entry.optString("productName"),
+                            quantity = entry.optDouble("quantity"),
+                            status = entry.optString("status"),
+                            notes = entry.optString("notes"),
+                            items = items
+                        )
+                    }
                 }
             }
             CustomerHistorySnapshot(sales, requests)
@@ -79,6 +91,12 @@ object CustomerHistoryCache {
                         .put("paymentMode", sale.paymentMode)
                         .put("paid", sale.paid)
                         .put("due", sale.due)
+                        .put("items", JSONArray(sale.items.map { item ->
+                            JSONObject().put("sku", item.sku).put("name", item.name).put("category", item.category)
+                                .put("quantity", item.quantity).put("unitPrice", item.unitPrice).put("discount", item.discount)
+                                .put("lineTotal", item.lineTotal).put("voided", item.voided)
+                                .put("fractionalQuantity", item.fractionalQuantity)
+                        }))
                         .put("pdfUrl", sale.pdfUrl)
                 )
             }
@@ -92,6 +110,9 @@ object CustomerHistoryCache {
                         .put("quantity", request.quantity)
                         .put("status", request.status)
                         .put("notes", request.notes)
+                        .put("items", JSONArray(request.items.map { item ->
+                            JSONObject().put("name", item.name).put("sku", item.sku).put("quantity", item.quantity)
+                        }))
                 )
             }
         }.sortedByDescending { it.optString("date") }.take(MAX_ENTRIES)

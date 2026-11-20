@@ -11,14 +11,40 @@ data class Product(
     val name: String,
     val category: String,
     val price: Int,
-    val stock: Int,
-    val imageId: String = ""
+    val stock: Double,
+    val imageId: String = "",
+    val available: Boolean = true,
+    val fractionalQuantity: Boolean = false
+)
+data class ShopSession(val email: String, val role: String)
+data class DeletionRequest(
+    val id: String,
+    val date: String,
+    val requestedBy: String,
+    val type: String,
+    val recordId: String,
+    val summary: String,
+    val reason: String,
+    val status: String,
+    val reviewedBy: String = "",
+    val decisionNote: String = ""
 )
 
 data class ShopCustomer(val id: String, val name: String, val phone: String, val email: String)
-data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Int, val imageId: String)
+data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false)
 data class CreatedInvoice(val invoiceNumber: String, val total: Int, val pdfUrl: String, val paid: Int, val due: Int, val paymentMode: String)
 data class InvoicePdf(val fileName: String, val mimeType: String, val bytes: ByteArray)
+data class InvoiceLine(
+    val sku: String,
+    val name: String,
+    val category: String,
+    val quantity: Double,
+    val unitPrice: Int,
+    val discount: Int,
+    val lineTotal: Int,
+    val voided: Boolean = false,
+    val fractionalQuantity: Boolean = false
+)
 data class ShopInvoice(
     val number: String,
     val date: String,
@@ -28,7 +54,9 @@ data class ShopInvoice(
     val paymentMode: String,
     val pdfUrl: String,
     val paid: Int = if (paymentMode.equals("Credit", ignoreCase = true)) 0 else total,
-    val due: Int = if (paymentMode.equals("Credit", ignoreCase = true)) total else 0
+    val due: Int = if (paymentMode.equals("Credit", ignoreCase = true)) total else 0,
+    val isVoided: Boolean = false,
+    val items: List<InvoiceLine> = emptyList()
 )
 data class PaymentReceipt(
     val id: String,
@@ -41,7 +69,8 @@ data class PaymentReceipt(
     val syncStatus: String = "SYNCED",
     val requestId: String = "",
     val customerName: String = "",
-    val customerPhone: String = ""
+    val customerPhone: String = "",
+    val isVoided: Boolean = false
 )
 data class BillPaymentResult(val receipt: PaymentReceipt, val invoiceDue: Int)
 data class CustomerPaymentAllocation(val invoiceNumber: String, val amount: Int, val dueAfter: Int)
@@ -54,7 +83,18 @@ data class CustomerFinance(
     val payments: List<PaymentReceipt>
 )
 data class CreatedOrderRequest(val requestNumber: String, val status: String)
-data class CustomerOrderRequest(val number: String, val date: String, val productName: String, val quantity: Int, val status: String, val notes: String)
+data class OrderRequestItem(val name: String, val sku: String, val quantity: Double)
+data class CustomerOrderRequest(
+    val number: String,
+    val date: String,
+    val productName: String,
+    val quantity: Double,
+    val status: String,
+    val notes: String,
+    val customerName: String = "",
+    val customerPhone: String = "",
+    val items: List<OrderRequestItem> = emptyList()
+)
 
 class ShopApiClient(baseUrl: String) {
     private val root = baseUrl.trim().trimEnd('/')
@@ -71,7 +111,8 @@ class ShopApiClient(baseUrl: String) {
                 date = row.optString("date"), invoiceNumber = row.optString("invoiceNumber"),
                 amount = row.optDouble("amount").toInt(), method = row.optString("method"),
                 note = row.optString("note"), syncStatus = "SYNCED", requestId = row.optString("requestId"),
-                customerName = row.optString("customerName"), customerPhone = row.optString("customerPhone")
+                customerName = row.optString("customerName"), customerPhone = row.optString("customerPhone"),
+                isVoided = row.optBoolean("voided", false)
             )
         }
     }
@@ -86,11 +127,45 @@ class ShopApiClient(baseUrl: String) {
                 name = row.optString("name"),
                 category = row.optString("category"),
                 price = row.optDouble("price").toInt(),
-                stock = row.optDouble("stock").toInt(),
-                imageId = row.optString("imageId")
+                stock = row.optDouble("stock"),
+                imageId = row.optString("imageId"),
+                available = row.optBoolean("available", true),
+                fractionalQuantity = row.optBoolean("fractionalQuantity", false)
             )
         }
     }
+
+    fun session(idToken: String): ShopSession {
+        val response = request("session", idToken, JSONObject())
+        return ShopSession(response.optString("email"), response.optString("role", "SALESPERSON"))
+    }
+
+    fun requestDeletion(idToken: String, type: String, recordId: String, reason: String): DeletionRequest {
+        val row = request("requestDeletion", idToken, JSONObject()
+            .put("type", type).put("recordId", recordId).put("reason", reason)).optJSONObject("request") ?: JSONObject()
+        return row.toDeletionRequest()
+    }
+
+    fun deletionRequests(idToken: String, type: String): List<DeletionRequest> {
+        val rows = request("listDeletionRequests", idToken, JSONObject().put("type", type)).optJSONArray("requests") ?: JSONArray()
+        return (0 until rows.length()).mapNotNull { rows.optJSONObject(it)?.toDeletionRequest() }
+    }
+
+    fun reviewDeletionRequest(idToken: String, requestId: String, approve: Boolean, note: String = "") {
+        request("reviewDeletionRequest", idToken, JSONObject()
+            .put("requestId", requestId).put("decision", if (approve) "APPROVE" else "REJECT").put("note", note))
+    }
+
+    fun setProductAvailability(idToken: String, sku: String, available: Boolean) {
+        request("setProductAvailability", idToken, JSONObject().put("sku", sku).put("available", available))
+    }
+
+    private fun JSONObject.toDeletionRequest() = DeletionRequest(
+        id = optString("id"), date = optString("date"), requestedBy = optString("requestedBy"),
+        type = optString("type"), recordId = optString("recordId"), summary = optString("summary"),
+        reason = optString("reason"), status = optString("status"), reviewedBy = optString("reviewedBy"),
+        decisionNote = optString("decisionNote")
+    )
 
     fun findCustomer(idToken: String, phone: String): ShopCustomer? {
         val response = request("findCustomer", idToken, JSONObject().put("phone", phone))
@@ -116,7 +191,8 @@ class ShopApiClient(baseUrl: String) {
             PaymentReceipt(
                 id = row.optString("id"), receiptNumber = row.optString("receiptNumber"), date = row.optString("date"),
                 invoiceNumber = row.optString("invoiceNumber"), amount = row.optDouble("amount").toInt(),
-                method = row.optString("method"), note = row.optString("note"), requestId = row.optString("requestId")
+                method = row.optString("method"), note = row.optString("note"), requestId = row.optString("requestId"),
+                isVoided = row.optBoolean("voided", false)
             )
         }
         return CustomerFinance(
@@ -142,6 +218,21 @@ class ShopApiClient(baseUrl: String) {
         val rows = response.optJSONArray("bills") ?: JSONArray()
         return (0 until rows.length()).mapNotNull { index ->
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
+            val itemRows = row.optJSONArray("items") ?: JSONArray()
+            val invoiceItems = (0 until itemRows.length()).mapNotNull { itemIndex ->
+                val item = itemRows.optJSONObject(itemIndex) ?: return@mapNotNull null
+                InvoiceLine(
+                    sku = item.optString("sku"),
+                    name = item.optString("name"),
+                    category = item.optString("category"),
+                    quantity = item.optDouble("quantity"),
+                    unitPrice = item.optDouble("unitPrice").toInt(),
+                    discount = item.optDouble("discount").toInt(),
+                    lineTotal = item.optDouble("lineTotal").toInt(),
+                    voided = item.optBoolean("voided", false),
+                    fractionalQuantity = item.optBoolean("fractionalQuantity", false)
+                )
+            }
             val paymentMode = row.optString("paymentMode")
             val total = row.optDouble("total").toInt()
             ShopInvoice(
@@ -153,7 +244,9 @@ class ShopApiClient(baseUrl: String) {
                 paymentMode = paymentMode,
                 pdfUrl = row.optString("pdfUrl"),
                 paid = row.optDouble("paid", if (paymentMode == "Credit") 0.0 else total.toDouble()).toInt(),
-                due = row.optDouble("due", if (paymentMode == "Credit") total.toDouble() else 0.0).toInt()
+                due = row.optDouble("due", if (paymentMode == "Credit") total.toDouble() else 0.0).toInt(),
+                isVoided = row.optBoolean("voided", false),
+                items = invoiceItems
             )
         }
     }
@@ -183,7 +276,20 @@ class ShopApiClient(baseUrl: String) {
         val rows = response.optJSONArray("requests") ?: JSONArray()
         return (0 until rows.length()).mapNotNull { index ->
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
-            CustomerOrderRequest(row.optString("number"), row.optString("date"), row.optString("productName"), row.optInt("quantity"), row.optString("status"), row.optString("notes"))
+            val itemRows = row.optJSONArray("items") ?: JSONArray()
+            val items = (0 until itemRows.length()).mapNotNull { itemIndex ->
+                val item = itemRows.optJSONObject(itemIndex) ?: return@mapNotNull null
+                OrderRequestItem(
+                    name = item.optString("name"),
+                    sku = item.optString("sku"),
+                    quantity = item.optDouble("quantity")
+                )
+            }
+            CustomerOrderRequest(
+                row.optString("number"), row.optString("date"), row.optString("productName"),
+                row.optDouble("quantity"), row.optString("status"), row.optString("notes"),
+                row.optString("customerName"), row.optString("customerPhone"), items
+            )
         }
     }
 
@@ -211,8 +317,9 @@ class ShopApiClient(baseUrl: String) {
         category: String,
         sellingPrice: Double,
         unitCost: Double,
-        openingStock: Int,
-        imageBase64: String = ""
+        openingStock: Double,
+        imageBase64: String = "",
+        fractionalQuantity: Boolean = false
     ): CreatedProduct {
         val body = JSONObject()
             .put("name", name)
@@ -220,9 +327,10 @@ class ShopApiClient(baseUrl: String) {
             .put("sellingPrice", sellingPrice)
             .put("unitCost", unitCost)
             .put("openingStock", openingStock)
+            .put("fractionalQuantity", fractionalQuantity)
             .put("imageBase64", imageBase64)
         val row = request("createProduct", idToken, body)
-        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock").toInt(), row.optString("imageId"))
+        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock"), row.optString("imageId"), row.optBoolean("fractionalQuantity", fractionalQuantity))
     }
 
     fun createInvoice(

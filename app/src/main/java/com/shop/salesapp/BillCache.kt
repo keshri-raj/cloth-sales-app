@@ -19,7 +19,23 @@ object BillCache {
                 val row = rows.optJSONObject(index) ?: return@mapNotNull null
                 val number = row.optString("number")
                 if (number.isBlank()) null
-                else ShopInvoice(
+                else {
+                    val itemRows = row.optJSONArray("items") ?: JSONArray()
+                    val items = (0 until itemRows.length()).mapNotNull { itemIndex ->
+                        val item = itemRows.optJSONObject(itemIndex) ?: return@mapNotNull null
+                        InvoiceLine(
+                            sku = item.optString("sku"),
+                            name = item.optString("name"),
+                            category = item.optString("category"),
+                            quantity = item.optDouble("quantity"),
+                            unitPrice = item.optInt("unitPrice"),
+                            discount = item.optInt("discount"),
+                            lineTotal = item.optInt("lineTotal"),
+                            voided = item.optBoolean("voided", false),
+                            fractionalQuantity = item.optBoolean("fractionalQuantity", false)
+                        )
+                    }
+                    ShopInvoice(
                     number = number,
                     date = row.optString("date"),
                     customerName = row.optString("customerName"),
@@ -28,8 +44,11 @@ object BillCache {
                     paymentMode = row.optString("paymentMode"),
                     pdfUrl = row.optString("pdfUrl"),
                     paid = row.optInt("paid", if (row.optString("paymentMode") == "Credit") 0 else row.optInt("total")),
-                    due = row.optInt("due", if (row.optString("paymentMode") == "Credit") row.optInt("total") else 0)
-                ).takeIf { it.isComplete() }
+                    due = row.optInt("due", if (row.optString("paymentMode") == "Credit") row.optInt("total") else 0),
+                    isVoided = row.optBoolean("isVoided", false),
+                    items = items
+                    ).takeIf { it.isComplete() }
+                }
             }
         }.getOrDefault(emptyList())
     }
@@ -37,6 +56,18 @@ object BillCache {
     fun save(context: Context, bills: List<ShopInvoice>) {
         val rows = JSONArray()
         bills.asSequence().filter { it.isComplete() }.take(MAX_BILLS).forEach { bill ->
+            val itemRows = JSONArray(bill.items.map { item ->
+                JSONObject()
+                    .put("sku", item.sku)
+                    .put("name", item.name)
+                    .put("category", item.category)
+                    .put("quantity", item.quantity)
+                    .put("unitPrice", item.unitPrice)
+                    .put("discount", item.discount)
+                    .put("lineTotal", item.lineTotal)
+                    .put("voided", item.voided)
+                    .put("fractionalQuantity", item.fractionalQuantity)
+            })
             rows.put(
                 JSONObject()
                     .put("number", bill.number)
@@ -47,7 +78,9 @@ object BillCache {
                     .put("paymentMode", bill.paymentMode)
                     .put("paid", bill.paid)
                     .put("due", bill.due)
+                    .put("isVoided", bill.isVoided)
                     .put("pdfUrl", bill.pdfUrl)
+                    .put("items", itemRows)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
