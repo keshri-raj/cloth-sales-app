@@ -3,6 +3,7 @@
 /build/
 /app/build/
 local.properties
+apps-script/local-dev.json
 .DS_Store
 *.iml
 backend/.env

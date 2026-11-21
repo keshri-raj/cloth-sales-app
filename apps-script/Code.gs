@@ -18,25 +18,46 @@ const APP = {
     'Sales Invoices': ['Invoice #', 'Date', 'Customer ID', 'Customer Name', 'Items', 'Invoice Total', 'Gross Profit', 'Payment Mode', 'Invoice File', 'Customer Phone', 'Status'],
     'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit', 'Status'],
     Payments: ['Payment ID', 'Date', 'Customer ID', 'Customer Phone', 'Invoice #', 'Amount', 'Payment Method', 'Received By', 'Notes', 'Receipt #', 'Client Request ID', 'Status'],
+    'Stock Adjustments': ['Adjustment ID', 'Date', 'SKU', 'Quantity Added', 'Reason', 'Adjusted By'],
   },
-  primaryKey: { Inventory: 'SKU', Customers: 'Customer ID', 'Sales Invoices': 'Invoice #', 'Sales Items': 'Invoice #', Payments: 'Payment ID' },
+  primaryKey: { Inventory: 'SKU', Customers: 'Customer ID', 'Sales Invoices': 'Invoice #', 'Sales Items': 'Invoice #', Payments: 'Payment ID', 'Stock Adjustments': 'Adjustment ID' },
 };
 
-function doGet() {
-  return json_({ ok: true, service: 'sales-app-api', mode: 'apps-script' });
+function doGet(event) {
+  if (event && event.parameter && event.parameter.health === '1') {
+    return json_({ ok: true, service: 'sales-app-api', mode: 'apps-script' });
+  }
+  const page = HtmlService.createTemplateFromFile('Index');
+  page.googleClientId = String(PropertiesService.getScriptProperties().getProperty('GOOGLE_OAUTH_CLIENT_ID') || '').trim();
+  return page.evaluate()
+    .setTitle('Avani Suto | Shop')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 function doPost(event) {
+  const raw = event && event.postData ? String(event.postData.contents || '') : '';
+  if (!raw || raw.length > APP.maxRequestBytes) return json_({ ok: false, error: 'Request is empty or too large.' });
   try {
-    const raw = event && event.postData ? String(event.postData.contents || '') : '';
-    if (!raw || raw.length > APP.maxRequestBytes) throw apiError_('Request is empty or too large.', 413);
-    const request = JSON.parse(raw);
+    return json_(dispatchApi_(JSON.parse(raw)));
+  } catch (error) {
+    console.error(error && error.stack ? error.stack : error);
+    return json_({ ok: false, error: 'The request could not be completed. Try again or contact the manager.' });
+  }
+}
+
+/** Browser calls use google.script.run, avoiding cross-origin API restrictions. */
+function webApi(action, payload, idToken) {
+  return dispatchApi_({ action: action, payload: payload || {}, idToken: idToken });
+}
+
+function dispatchApi_(request) {
+  try {
     const config = config_();
-    const user = authenticate_(request.idToken, config);
-    const payload = request.payload || {};
+    const user = authenticate_(request && request.idToken, config);
+    const payload = request && request.payload || {};
     let result;
 
-    switch (String(request.action || '')) {
+    switch (String(request && request.action || '')) {
       case 'products':
         result = listProducts_(config, String(payload.query || ''));
         break;
@@ -57,6 +78,14 @@ function doPost(event) {
       case 'setProductAvailability':
         requireAdmin_(user);
         result = withWriteLock_(function () { return setProductAvailability_(config, payload); });
+        break;
+      case 'updateProduct':
+        requireAdmin_(user);
+        result = withWriteLock_(function () { return updateProduct_(config, payload); });
+        break;
+      case 'addStockAdjustment':
+        requireAdmin_(user);
+        result = withWriteLock_(function () { return addStockAdjustment_(config, payload, user.email); });
         break;
       case 'findCustomer':
         result = { customer: findCustomer_(config, String(payload.phone || '')) };
@@ -109,11 +138,11 @@ function doPost(event) {
       default:
         throw apiError_('Unknown Sales App action.', 404);
     }
-    return json_(Object.assign({ ok: true }, result));
+    return Object.assign({ ok: true }, result);
   } catch (error) {
     const message = error && error.apiMessage ? error.apiMessage : 'The request could not be completed. Try again or contact the manager.';
     if (!error || !error.apiMessage) console.error(error && error.stack ? error.stack : error);
-    return json_({ ok: false, error: message });
+    return { ok: false, error: message };
   }
 }
 
@@ -353,6 +382,70 @@ function setProductAvailability_(config, payload) {
   const available = payload.available === true || String(payload.available).toLowerCase() === 'true';
   setTableCell_(table, product._rowNumber, 'Availability', available ? 'Available' : 'Unavailable');
   return { sku: sku, available: available };
+}
+
+function updateProduct_(config, payload) {
+  const sku = String(payload.sku || '').trim();
+  const name = String(payload.name || '').trim();
+  const category = String(payload.category || 'Other').trim() || 'Other';
+  const sellingPrice = Number(payload.sellingPrice);
+  const fractionalQuantity = payload.fractionalQuantity === true;
+  if (!sku || !name || name.length > 120 || category.length > 100 || !Number.isInteger(sellingPrice) || sellingPrice < 0) {
+    throw apiError_('Enter a cloth name, category, and valid whole-rupee price.', 400);
+  }
+  ensureColumn_(config, 'Inventory', 'Fractional Quantity');
+  const table = getTable_(config, 'Inventory');
+  const row = table.rows.find(function (item) { return String(item.SKU || '').trim() === sku; });
+  if (!row) throw apiError_('That cloth was not found in Shop.', 404);
+  const duplicate = table.rows.find(function (item) {
+    return String(item.SKU || '').trim() !== sku && String(item['Product Name'] || '').trim().toLowerCase() === name.toLowerCase();
+  });
+  if (duplicate) throw apiError_('That cloth name already exists. Choose a different name.', 409);
+  setTableCell_(table, row._rowNumber, 'Product Name', name);
+  setTableCell_(table, row._rowNumber, 'Category', category);
+  setTableCell_(table, row._rowNumber, 'Selling Price', sellingPrice);
+  setTableCell_(table, row._rowNumber, 'Fractional Quantity', fractionalQuantity);
+  return { sku: sku, name: name, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity };
+}
+
+function ensureStockAdjustmentsSheet_(config) {
+  const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
+  let sheet = spreadsheet.getSheetByName('Stock Adjustments');
+  const headers = APP.sheets['Stock Adjustments'];
+  if (!sheet) sheet = spreadsheet.insertSheet('Stock Adjustments');
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+}
+
+function addStockAdjustment_(config, payload, adminEmail) {
+  ensureStockAdjustmentsSheet_(config);
+  const sku = String(payload.sku || '').trim();
+  const quantity = Number(payload.quantity);
+  const reason = String(payload.reason || 'Restock').trim().slice(0, 200) || 'Restock';
+  if (!sku || !Number.isFinite(quantity) || quantity <= 0 || quantity > 100000) {
+    throw apiError_('Enter a stock quantity greater than zero.', 400);
+  }
+  const inventory = getTable_(config, 'Inventory');
+  const product = inventory.rows.find(function (row) { return String(row.SKU || '').trim() === sku; });
+  if (!product) throw apiError_('That cloth was not found in Shop.', 404);
+  if (!fractionalQuantityEnabled_(product['Fractional Quantity']) && !Number.isInteger(quantity)) {
+    throw apiError_('This cloth is counted in whole pieces. Enter a whole number.', 400);
+  }
+  const table = getTable_(config, 'Stock Adjustments');
+  const record = {
+    'Adjustment ID': newId_('STK'),
+    Date: Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss'),
+    SKU: sku,
+    'Quantity Added': quantity,
+    Reason: reason,
+    'Adjusted By': adminEmail,
+  };
+  writeRecords_(config, [
+    { title: 'Stock Adjustments', table: table, rowNumber: nextFreeRow_(table), record: record },
+  ], ['Stock Adjustments', 'Inventory']);
+  return { sku: sku, quantityAdded: quantity };
 }
 
 function setTableCell_(table, rowNumber, header, value) {
@@ -708,7 +801,10 @@ function invoicePdf_(config, payload) {
     throw apiError_('Bill items are incomplete, so its PDF cannot be refreshed. Ask the manager to check this bill.', 409);
   }
   const invoice = {
-    number: invoiceNumber, date: date, total: total,
+    number: invoiceNumber, date: date,
+    subtotal: lines.reduce(function (sum, line) { return sum + Math.round(line.quantity * line.unitPrice); }, 0),
+    discount: lines.reduce(function (sum, line) { return sum + line.discount; }, 0),
+    total: total,
     paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
   };
   const customer = { name: String(invoiceRow['Customer Name'] || ''), phone: String(invoiceRow['Customer Phone'] || '') };
@@ -1112,7 +1208,7 @@ function createInvoice_(config, payload, userEmail) {
     if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * quantity) throw apiError_('Discount must be between zero and the item total.', 400);
     return {
       sku: String(product.SKU), name: String(product['Product Name']), category: String(product.Category || ''),
-      quantity: quantity, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
+      quantity: quantity, fractionalQuantity: fractionalAllowed, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
       lineTotal: Math.max(0, Math.round(quantity * unitPrice - discount)),
     };
   });
@@ -1121,8 +1217,38 @@ function createInvoice_(config, payload, userEmail) {
     return !line.sku || !line.name || !Number.isFinite(line.quantity) || line.quantity < 0.001 ||
       !Number.isFinite(line.unitPrice) || line.unitPrice <= 0 || !Number.isFinite(line.lineTotal) || line.lineTotal <= 0;
   })) throw apiError_('Some bill details are incomplete. Check the cloth, price, and quantity, then try again.', 400);
-  const total = resolvedLines.reduce(function (sum, line) { return sum + line.lineTotal; }, 0);
+  const subtotal = resolvedLines.reduce(function (sum, line) { return sum + line.lineTotal; }, 0);
+  const discountValue = Number(payload.discountValue || 0);
+  if (String(payload.discountType || '').trim().toUpperCase() === 'PERCENT') {
+    throw apiError_('Percentage discounts are not supported. Enter the discount as a rupee amount.', 400);
+  }
+  if (!Number.isFinite(discountValue) || discountValue < 0) {
+    throw apiError_('Enter a valid bill discount.', 400);
+  }
+  const billDiscount = Math.round(discountValue);
+  if (billDiscount > subtotal) throw apiError_('Discount cannot be more than the bill subtotal.', 400);
+  if (billDiscount > 0 && subtotal > 0) {
+    const allocations = resolvedLines.map(function (line, index) {
+      const exact = billDiscount * line.lineTotal / subtotal;
+      const floor = Math.floor(exact);
+      return { index: index, amount: floor, remainder: exact - floor };
+    });
+    let remaining = billDiscount - allocations.reduce(function (sum, item) { return sum + item.amount; }, 0);
+    allocations.slice().sort(function (a, b) { return b.remainder - a.remainder; }).forEach(function (allocation) {
+      if (remaining > 0) { allocations[allocation.index].amount += 1; remaining -= 1; }
+    });
+    allocations.forEach(function (allocation) {
+      const line = resolvedLines[allocation.index];
+      line.discount += allocation.amount;
+      line.lineTotal -= allocation.amount;
+    });
+  }
+  const total = subtotal - billDiscount;
   if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
+  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + line.quantity * line.unitCost; }, 0);
+  if (total + 0.000001 < combinedCost) {
+    throw apiError_('Discount is too high. The bill total cannot be below the combined purchase cost of the items.', 400);
+  }
   if (!String(customer['Customer Name'] || name || '').trim()) throw apiError_('Enter the customer name before saving this bill.', 400);
   const amountReceived = paymentMode === 'Credit' ? Number(payload.amountReceived || 0) : total;
   const paymentMethod = paymentMode === 'Credit' ? String(payload.paymentMethod || 'Cash').trim() : paymentMode;
@@ -1141,7 +1267,7 @@ function createInvoice_(config, payload, userEmail) {
   const receiptNumber = amountReceived > 0 ? newId_('RCPT') : '';
   const number = invoiceNumber_();
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd');
-  const invoice = { number: number, date: date, total: total, paymentMode: savedPaymentMode, paid: amountReceived, due: due };
+  const invoice = { number: number, date: date, subtotal: subtotal, discount: billDiscount, total: total, paymentMode: savedPaymentMode, paid: amountReceived, due: due };
   const customerSummary = { name: name || String(customer['Customer Name']), phone: phone };
   let createdPdfId = '';
   try {
@@ -1185,7 +1311,7 @@ function createInvoice_(config, payload, userEmail) {
     }
     writeRecords_(config, plans, ['Inventory', 'Customers', 'Sales Invoices', 'Sales Items', 'Payments']);
     createdPdfId = '';
-    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, total: total, paid: amountReceived, due: due, paymentMode: savedPaymentMode, pdfUrl: file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view' };
+    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, subtotal: subtotal, discount: billDiscount, total: total, paid: amountReceived, due: due, paymentMode: savedPaymentMode, pdfUrl: file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view' };
   } catch (error) {
     if (createdPdfId) {
       try { Drive.Files.delete(createdPdfId); } catch (cleanupError) { console.error(cleanupError); }
@@ -1195,7 +1321,9 @@ function createInvoice_(config, payload, userEmail) {
 }
 
 function getTable_(config, title) {
+  if (title === 'Stock Adjustments') ensureStockAdjustmentsSheet_(config);
   if (title === 'Inventory') {
+    ensureStockAdjustmentsSheet_(config);
     ensureColumn_(config, title, 'Availability');
     ensureColumn_(config, title, 'Fractional Quantity');
   }
@@ -1307,7 +1435,7 @@ function formulasForRow_(title, row) {
   if (title === 'Inventory') return {
     'Purchased Qty': '=IF(A' + row + '="","",SUMIFS(\'Purchase Items\'!$F$2:$F$1000,\'Purchase Items\'!$C$2:$C$1000,A' + row + '))',
     'Sold Qty': '=IF(A' + row + '="","",SUMIFS(\'Sales Items\'!$F$2:$F$1000,\'Sales Items\'!$C$2:$C$1000,A' + row + ',\'Sales Items\'!$L$2:$L$1000,"<>VOIDED"))',
-    'Current Stock': '=IF(A' + row + '="","",G' + row + '+I' + row + '-J' + row + ')',
+    'Current Stock': '=IF(A' + row + '="","",G' + row + '+I' + row + '-J' + row + '+SUMIFS(\'Stock Adjustments\'!$D$2:$D$1000,\'Stock Adjustments\'!$C$2:$C$1000,A' + row + '))',
     'Stock Value': '=IF(A' + row + '="","",K' + row + '*E' + row + ')',
     'Stock Status': '=IF(A' + row + '="","",IF(K' + row + '<=0,"Out of Stock",IF(K' + row + '<=H' + row + ',"Low Stock","OK")))',
   };
@@ -1354,13 +1482,14 @@ function buildInvoicePdf_(invoice, customer, lines) {
   }).join('');
   const logo = '<svg class="brand-mark" viewBox="0 0 100 74" role="img" aria-label="Avani Suto logo"><path fill="#102f50" d="M8 67 38 8c3-6 10-6 13 0l26 59H60L43 28 24 67Z"/><path fill="#df713f" d="m44 7 8 1 28 59H65L49 32 39 51 31 55Z"/><path fill="#102f50" d="M22 47 63 39l7 12-54 9Z"/><path fill="#df713f" d="M66 58h15l4 8H70Z"/></svg>';
   const html = '<!doctype html><html><head><meta charset="utf-8"><style>' +
-    '@page{size:A5 portrait;margin:12mm 14mm 20mm}html{-webkit-print-color-adjust:exact;print-color-adjust:exact}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#1d2936;font-size:10pt;margin:0}.invoice{position:relative;z-index:1;min-height:170mm}.top{display:flex;justify-content:space-between;align-items:flex-start;min-height:26mm}.brand{width:42%;text-align:center}.brand-mark{display:block;width:28mm;height:20mm;margin:0 auto 1mm}.brand-name{font-family:Georgia,serif;font-size:13pt;letter-spacing:1.1px;color:#102f50}.number{text-align:right;padding-top:2mm}.number-label{font-size:9pt;font-weight:bold;color:#596574;letter-spacing:.5px}.number-value{font-size:12pt;margin-top:2mm;white-space:nowrap}.title{font-family:Georgia,serif;color:#102f50;font-size:43pt;line-height:1;font-weight:bold;margin:1mm 0 3mm;letter-spacing:.3px}.date{display:flex;gap:10px;font-size:11pt;margin:0 0 6mm}.date b{font-weight:bold}.parties{display:flex;gap:10mm;margin-bottom:5mm}.party{width:50%;line-height:1.3}.party h2{font-size:12pt;margin:0 0 1mm;color:#202a35}.party .name{font-size:11pt;margin:0 0 1mm}.party .details{font-size:10pt;color:#556170;margin:0}.items{width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 2mm}.items th{background:#e9edef;font-weight:bold;text-align:left;padding:2mm 2.5mm;font-size:10pt}.items td{padding:2.5mm 2.5mm;border-bottom:1px solid #d1d8dd;font-size:10pt;vertical-align:top}.items .item{width:38%;overflow-wrap:anywhere}.items .qty{width:14%}.items .price{width:24%}.items .amount{width:24%}.num{text-align:right;white-space:nowrap}.total-row{display:flex;justify-content:flex-end;align-items:center;gap:12mm;border-bottom:1px solid #cbd3da;padding:2mm 2mm 2.5mm;font-size:13pt;font-weight:bold}.total-row strong{color:#102f50;font-size:16pt}.payment{display:flex;justify-content:space-between;align-items:center;position:relative;padding:4mm 0 1mm;min-height:23mm}.payment-details{line-height:1.65;font-size:10.5pt}.payment-details b{display:inline-block;min-width:34mm}.stamp{border:2px solid ' + statusColor + ';border-radius:5px;color:' + statusColor + ';font-size:18pt;font-weight:bold;letter-spacing:1.5px;padding:1mm 5mm;transform:rotate(-10deg);margin-right:3mm}.thanks{font-size:10pt;color:#566372;margin-top:4mm}.footer-wave{position:absolute;left:-14mm;bottom:-20mm;width:148mm;height:25mm;z-index:-1}.items thead{display:table-header-group}.items tr{page-break-inside:avoid;break-inside:avoid}.total-row,.payment,.thanks{page-break-inside:avoid;break-inside:avoid}' +
+    '@page{size:A5 portrait;margin:12mm 14mm 20mm}html{-webkit-print-color-adjust:exact;print-color-adjust:exact}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#1d2936;font-size:10pt;margin:0}.invoice{position:relative;z-index:1;min-height:170mm}.top{display:flex;justify-content:space-between;align-items:flex-start;min-height:26mm}.brand{width:42%;text-align:center}.brand-mark{display:block;width:28mm;height:20mm;margin:0 auto 1mm}.brand-name{font-family:Georgia,serif;font-size:13pt;letter-spacing:1.1px;color:#102f50}.number{text-align:right;padding-top:2mm}.number-label{font-size:9pt;font-weight:bold;color:#596574;letter-spacing:.5px}.number-value{font-size:12pt;margin-top:2mm;white-space:nowrap}.title{font-family:Georgia,serif;color:#102f50;font-size:43pt;line-height:1;font-weight:bold;margin:1mm 0 3mm;letter-spacing:.3px}.date{display:flex;gap:10px;font-size:11pt;margin:0 0 6mm}.date b{font-weight:bold}.parties{display:flex;gap:10mm;margin-bottom:5mm}.party{width:50%;line-height:1.3}.party h2{font-size:12pt;margin:0 0 1mm;color:#202a35}.party .name{font-size:11pt;margin:0 0 1mm}.party .details{font-size:10pt;color:#556170;margin:0}.items{width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 2mm}.items th{background:#e9edef;font-weight:bold;text-align:left;padding:2mm 2.5mm;font-size:10pt}.items td{padding:2.5mm 2.5mm;border-bottom:1px solid #d1d8dd;font-size:10pt;vertical-align:top}.items .item{width:38%;overflow-wrap:anywhere}.items .qty{width:14%}.items .price{width:24%}.items .amount{width:24%}.num{text-align:right;white-space:nowrap}.total-row{display:flex;justify-content:flex-end;align-items:center;gap:12mm;border-bottom:1px solid #cbd3da;padding:1.5mm 2mm;font-size:10.5pt;font-weight:bold}.total-row strong{color:#102f50;font-size:13pt}.total-row.final{padding:2mm 2mm 2.5mm;font-size:13pt}.total-row.final strong{font-size:16pt}.payment{display:flex;justify-content:space-between;align-items:center;position:relative;padding:4mm 0 1mm;min-height:23mm}.payment-details{line-height:1.65;font-size:10.5pt}.payment-details b{display:inline-block;min-width:34mm}.stamp{border:2px solid ' + statusColor + ';border-radius:5px;color:' + statusColor + ';font-size:18pt;font-weight:bold;letter-spacing:1.5px;padding:1mm 5mm;transform:rotate(-10deg);margin-right:3mm}.thanks{font-size:10pt;color:#566372;margin-top:4mm}.footer-wave{position:absolute;left:-14mm;bottom:-20mm;width:148mm;height:25mm;z-index:-1}.items thead{display:table-header-group}.items tr{page-break-inside:avoid;break-inside:avoid}.total-row,.payment,.thanks{page-break-inside:avoid;break-inside:avoid}' +
     '</style></head><body><main class="invoice">' +
     '<header class="top"><div class="brand">' + logo + '<div class="brand-name">AVANI SUTO</div></div><div class="number"><div class="number-label">INVOICE NO.</div><div class="number-value">' + escape(invoice.number) + '</div></div></header>' +
     '<h1 class="title">INVOICE</h1><p class="date"><b>Date</b><span>' + escape(dateLabel) + '</span></p>' +
     '<section class="parties"><div class="party"><h2>Billed to</h2><p class="name">' + escape(customer.name || 'Walk-in customer') + '</p><p class="details">' + escape(customer.phone || '') + '</p></div><div class="party"><h2>From</h2><p class="name"><b>Avani Suto</b></p><p class="details">Main Road, Ward No 11<br>Simri Bakhtiarpur<br>Saharsa-852127, Bihar</p></div></section>' +
     '<table class="items"><thead><tr><th class="item">Item</th><th class="qty num">Quantity</th><th class="price num">Price</th><th class="amount num">Amount</th></tr></thead><tbody>' + bodyRows + '</tbody></table>' +
-    '<div class="total-row"><span>Total</span><strong>' + money(invoice.total) + '</strong></div>' +
+    (invoice.discount > 0 ? '<div class="total-row"><span>Subtotal</span><strong>' + money(invoice.subtotal) + '</strong></div><div class="total-row"><span>Discount</span><strong>− ' + money(invoice.discount) + '</strong></div>' : '') +
+    '<div class="total-row final"><span>Total</span><strong>' + money(invoice.total) + '</strong></div>' +
     '<section class="payment"><div class="payment-details"><div><b>Payment method</b> ' + escape(invoice.paymentMode) + '</div><div><b>Amount paid</b> ' + money(invoice.paid) + '</div><div><b>Balance due</b> ' + money(invoice.due) + '</div></div><div class="stamp">' + status + '</div></section>' +
     '<p class="thanks">Thank you for shopping with Avani Suto.</p><svg class="footer-wave" viewBox="0 0 600 110" preserveAspectRatio="none" aria-hidden="true"><path fill="#e3e8eb" d="M0 45C125 21 208 22 317 44c112 23 191 27 283-18v84H0Z"/><path fill="#102f50" d="M0 81c123-45 262-53 388-38 84 10 149 1 212-43v110H0Z"/></svg></main></body></html>';
   return HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF).setName(invoice.number + '.pdf');

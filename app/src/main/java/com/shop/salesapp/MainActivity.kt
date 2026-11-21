@@ -17,6 +17,7 @@ import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,16 +33,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -53,6 +58,7 @@ import androidx.compose.material.icons.rounded.AddShoppingCart
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.AddAPhoto
@@ -68,8 +74,10 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -97,6 +105,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,6 +158,9 @@ private val Ink = Color(0xFF0A3155)
 private val Teal = Color(0xFFB84A26)
 private val Paper = Color(0xFFFFFAF2)
 private val SoftBlue = Color(0xFFF5EAE0)
+private val ClothActionBlue = Color(0xFFDCEBFA)
+private val StockBadgeBlue = Color(0xFFEAF2F8)
+private val StockIconBlue = Color(0xFF477DA8)
 private val SoftGreen = Color(0xFFE5F3EF)
 private val Muted = Color(0xFF626B73)
 private val salesAppHindi = mutableStateOf(false)
@@ -292,6 +304,9 @@ private fun localizedAppMessage(message: String, hindi: Boolean): String {
         "A selected cloth is missing its name in Inventory. Ask the manager to correct it before billing." to "Inventory में चुने कपड़े का नाम नहीं है। बिल बनाने से पहले मैनेजर से ठीक करवाएँ।",
         "Some bill details are incomplete. Check the cloth, price, and quantity, then try again." to "बिल की कुछ जानकारी अधूरी है। कपड़ा, कीमत और मात्रा जाँचकर फिर कोशिश करें।",
         "The bill total must be greater than zero. Check the item prices and discounts, then try again." to "बिल की कुल राशि शून्य से अधिक होनी चाहिए। कीमत और छूट जाँचकर फिर कोशिश करें।",
+        "Discount is too high. The bill total cannot be below the combined purchase cost of the items." to "छूट बहुत ज़्यादा है। बिल की कुल राशि सभी कपड़ों की संयुक्त खरीद कीमत से कम नहीं हो सकती।",
+        "Discount cannot be more than the bill subtotal." to "छूट बिल की उप-कुल राशि से अधिक नहीं हो सकती।",
+        "Enter a valid bill discount." to "बिल की सही छूट दर्ज करें।",
         "Choose Cash, UPI, or Card for the amount received." to "मिली हुई राशि का तरीका Cash, UPI या Card चुनें।",
         "Another sale is being saved. Please try again in a moment." to "दूसरी बिक्री सहेजी जा रही है। थोड़ी देर में फिर कोशिश करें।",
         "There is not enough room for all bill items. Ask the manager to make space in Sales Items." to "बिल के सभी कपड़ों के लिए जगह नहीं है। मैनेजर से Sales Items में जगह बनाने को कहें।",
@@ -344,7 +359,8 @@ private fun validCartQuantity(line: CartLine): Boolean {
 private fun CartQuantityControl(
     line: CartLine,
     onChange: (String, Double) -> Unit,
-    onSet: (String, Double) -> Unit
+    onSet: (String, Double) -> Unit,
+    compact: Boolean = false
 ) {
     var quantityText by remember(line.product.sku) { mutableStateOf(formatQuantity(line.quantity)) }
     var isEditing by remember(line.product.sku) { mutableStateOf(false) }
@@ -357,7 +373,7 @@ private fun CartQuantityControl(
             val next = (line.quantity - step).coerceAtLeast(0.0)
             quantityText = formatQuantity(next)
             onChange(line.product.sku, -step)
-        }) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ")) }
+        }, modifier = if (compact) Modifier.size(36.dp) else Modifier) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
         if (line.product.fractionalQuantity) {
             OutlinedTextField(
                 value = quantityText,
@@ -365,20 +381,20 @@ private fun CartQuantityControl(
                     quantityText = value
                     onSet(line.product.sku, value.toDoubleOrNull() ?: 0.0)
                 },
-                modifier = Modifier.width(82.dp).onFocusChanged { isEditing = it.isFocused },
+                modifier = Modifier.width(if (compact) 68.dp else 82.dp).onFocusChanged { isEditing = it.isFocused },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Bold),
                 shape = RoundedCornerShape(10.dp)
             )
         } else {
-            Text(formatQuantity(line.quantity), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(formatQuantity(line.quantity), fontSize = if (compact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
         }
         IconButton(onClick = {
             val next = minOf(line.product.stock, line.quantity + step)
             quantityText = formatQuantity(next)
             onChange(line.product.sku, step)
-        }) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ")) }
+        }, modifier = if (compact) Modifier.size(36.dp) else Modifier) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
     }
 }
 private data class CustomerHistoryItem(
@@ -477,7 +493,7 @@ private fun applyPaymentAllocations(
     }
 }
 
-private enum class Screen { Home, BillCenter, Bill, Bills, Customer, CustomerDetail, AddCustomer, ProductCenter, Search, Catalog, AddProduct, PlaceOrder, OrderRequests, OrderRequestDetail, Payments }
+private enum class Screen { Home, BillCenter, Bill, Bills, Customer, CustomerDetail, AddCustomer, ProductCenter, Search, Catalog, ProductDetail, AddProduct, PlaceOrder, OrderRequests, OrderRequestDetail, Payments }
 private data class DeletionTarget(val type: String, val recordId: String, val summary: String)
 
 private val previewProducts = listOf(
@@ -508,6 +524,8 @@ private fun SalesApp(operationScope: CoroutineScope) {
     var hasLiveProducts by remember(context) { mutableStateOf(savedProducts.isNotEmpty()) }
     var selectedTab by remember { mutableIntStateOf(-1) }
     var query by remember { mutableStateOf("") }
+    var catalogQuery by remember { mutableStateOf("") }
+    var selectedCatalogProduct by remember { mutableStateOf<Product?>(null) }
     var productSyncing by remember { mutableStateOf(false) }
     var customerDirectoryQuery by remember { mutableStateOf("") }
     var customerDirectoryLoading by remember { mutableStateOf(false) }
@@ -522,6 +540,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
     var paymentMode by remember { mutableStateOf("Cash") }
     var creditAmountReceived by remember { mutableStateOf("0") }
     var creditPaymentMethod by remember { mutableStateOf("Cash") }
+    var billDiscountValue by remember { mutableStateOf("0") }
     var productName by remember { mutableStateOf("") }
     var productCategory by remember { mutableStateOf("") }
     var productImageBase64 by remember { mutableStateOf("") }
@@ -607,7 +626,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
             selectedTab = when (destination) {
                 Screen.BillCenter, Screen.Bill, Screen.Bills -> 0
                 Screen.Customer, Screen.CustomerDetail, Screen.AddCustomer -> 1
-                Screen.ProductCenter, Screen.Search, Screen.Catalog, Screen.AddProduct, Screen.PlaceOrder, Screen.OrderRequests, Screen.OrderRequestDetail -> 2
+                Screen.ProductCenter, Screen.Search, Screen.Catalog, Screen.ProductDetail, Screen.AddProduct, Screen.PlaceOrder, Screen.OrderRequests, Screen.OrderRequestDetail -> 2
                 Screen.Payments -> 3
                 else -> -1
             }
@@ -620,7 +639,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
         selectedTab = when (screen) {
             Screen.BillCenter, Screen.Bill, Screen.Bills -> 0
             Screen.Customer, Screen.CustomerDetail, Screen.AddCustomer -> 1
-            Screen.ProductCenter, Screen.Search, Screen.Catalog, Screen.AddProduct, Screen.PlaceOrder, Screen.OrderRequests, Screen.OrderRequestDetail -> 2
+            Screen.ProductCenter, Screen.Search, Screen.Catalog, Screen.ProductDetail, Screen.AddProduct, Screen.PlaceOrder, Screen.OrderRequests, Screen.OrderRequestDetail -> 2
             Screen.Payments -> 3
             else -> -1
         }
@@ -897,6 +916,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
                                 products.clear()
                                 products.addAll(updated)
                                 ProductCache.save(context, updated)
+                                selectedCatalogProduct = updated.firstOrNull { it.sku == targetSku } ?: selectedCatalogProduct
                                 message = "Product picture saved to Shop."
                             }
                         }.onFailure { message = it.message ?: "Could not save this product picture." }
@@ -1214,8 +1234,70 @@ private fun SalesApp(operationScope: CoroutineScope) {
                 products.clear()
                 products.addAll(ProductCache.merge(emptyList(), fresh))
                 ProductCache.save(context, products)
+                selectedCatalogProduct = products.firstOrNull { it.sku == product.sku } ?: selectedCatalogProduct
                 message = if (available) "Cloth is available again." else "Cloth is now unavailable."
             }.onFailure { message = it.message ?: "Could not update cloth availability." }
+        }
+    }
+
+    fun updateClothDetails(
+        product: Product,
+        name: String,
+        category: String,
+        price: Int,
+        fractionalQuantity: Boolean,
+        onComplete: (Boolean) -> Unit
+    ) {
+        val token = idToken
+        if (token == null || !isAdministrator) {
+            message = "Only an administrator can edit cloth details."
+            onComplete(false)
+            return
+        }
+        operationScope.launch {
+            runCatchingCancellable {
+                withContext(Dispatchers.IO) {
+                    api.updateProduct(token, product.sku, name, category, price, fractionalQuantity)
+                    api.products(token, "")
+                }
+            }.onSuccess { fresh ->
+                products.clear()
+                products.addAll(ProductCache.merge(emptyList(), fresh))
+                ProductCache.save(context, products)
+                selectedCatalogProduct = products.firstOrNull { it.sku == product.sku }
+                message = "Cloth details updated."
+                onComplete(true)
+            }.onFailure { error ->
+                message = error.message ?: "Could not update cloth details."
+                onComplete(false)
+            }
+        }
+    }
+
+    fun addStockToCloth(product: Product, quantity: Double, reason: String, onComplete: (Boolean) -> Unit) {
+        val token = idToken
+        if (token == null || !isAdministrator) {
+            message = "Only an administrator can add cloth stock."
+            onComplete(false)
+            return
+        }
+        operationScope.launch {
+            runCatchingCancellable {
+                withContext(Dispatchers.IO) {
+                    api.addStockAdjustment(token, product.sku, quantity, reason)
+                    api.products(token, "")
+                }
+            }.onSuccess { fresh ->
+                products.clear()
+                products.addAll(ProductCache.merge(emptyList(), fresh))
+                ProductCache.save(context, products)
+                selectedCatalogProduct = products.firstOrNull { it.sku == product.sku }
+                message = "Stock added to Shop."
+                onComplete(true)
+            }.onFailure { error ->
+                message = error.message ?: "Could not add cloth stock."
+                onComplete(false)
+            }
         }
     }
 
@@ -1413,7 +1495,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
                 }
             },
             bottomBar = {
-        if (screen in setOf(Screen.Home, Screen.BillCenter, Screen.Bill, Screen.Bills, Screen.Customer, Screen.CustomerDetail, Screen.AddCustomer, Screen.ProductCenter, Screen.Search, Screen.Catalog, Screen.AddProduct, Screen.OrderRequests, Screen.OrderRequestDetail, Screen.Payments)) {
+        if (screen in setOf(Screen.Home, Screen.BillCenter, Screen.Bills, Screen.Customer, Screen.ProductCenter, Screen.Payments)) {
                     NavigationBar(containerColor = Color.White) {
                         NavigationBarItem(
                             selected = screen == Screen.Home,
@@ -1463,13 +1545,26 @@ private fun SalesApp(operationScope: CoroutineScope) {
                             .edit().putBoolean("use_hindi", hindi).apply()
                     },
                     onSignIn = { beginSignIn() },
-                    onNewBill = { orderMode = false; navigateTo(Screen.Bill) },
+                    onNewBill = { orderMode = false; billDiscountValue = "0"; navigateTo(Screen.Bill) },
                     onMakePayment = { paymentListTab = "DUE"; navigateTo(Screen.Payments) },
-                    onCatalog = { selectedTab = 2; navigateTo(Screen.Catalog) }
+                    onCatalog = { selectedTab = 2; navigateTo(Screen.Catalog) },
+                    onAddProduct = {
+                        productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false
+                        productImageBase64 = ""; productImageBitmap = null
+                        navigateTo(Screen.AddProduct)
+                    },
+                    onPlaceOrder = {
+                        orderMode = true
+                        orderNotes = ""
+                        cart.clear()
+                        customerPhone = ""; customerName = ""; customerEmail = ""; customerAddress = ""
+                        customerExists = null; customerMatches = emptyList()
+                        navigateTo(Screen.PlaceOrder)
+                    }
                 )
                 Screen.BillCenter -> BillCenterScreen(
                     padding = insets,
-                    onCreateBill = { orderMode = false; navigateTo(Screen.Bill) },
+                    onCreateBill = { orderMode = false; billDiscountValue = "0"; navigateTo(Screen.Bill) },
                     onFindBill = { billsPhone = ""; navigateTo(Screen.Bills) }
                 )
                 Screen.ProductCenter -> ProductCenterScreen(
@@ -1479,7 +1574,6 @@ private fun SalesApp(operationScope: CoroutineScope) {
                         productImageBase64 = ""; productImageBitmap = null
                         navigateTo(Screen.AddProduct)
                     },
-                    onSearch = { orderMode = false; navigateTo(Screen.Search) },
                     onCatalog = { navigateTo(Screen.Catalog) },
                     onViewOrderRequests = { navigateTo(Screen.OrderRequests); syncOrderRequests() },
                     onPlaceOrder = {
@@ -1580,14 +1674,17 @@ private fun SalesApp(operationScope: CoroutineScope) {
                     refreshing = productSyncing,
                     onSync = { syncProductsFromShop() },
                     onQuery = { query = it },
-                    onShareQrLabels = { labels -> shareQrLabelPdf(labels) },
-                    onProductQr = { qrPreviewProduct = it },
+                    imageLoader = { imageId ->
+                        val token = idToken
+                        if (token.isNullOrBlank()) null else api.productImage(token, imageId)
+                    },
                     onScan = {
                         scanQr { scannedCode ->
                             query = scannedCode
                             message = "Scanned $scannedCode"
                         }
                     },
+                    onProductQr = { qrPreviewProduct = it },
                     onAddToBill = { product ->
                         val index = cart.indexOfFirst { it.product.sku == product.sku }
                         val step = if (product.fractionalQuantity) 0.1 else 1.0
@@ -1663,10 +1760,16 @@ private fun SalesApp(operationScope: CoroutineScope) {
                     customerSearching = customerSearching,
                     customerMatches = customerMatches,
                     saving = if (screen == Screen.PlaceOrder) sendingOrderRequest else savingInvoice,
+                    savingCustomer = savingCustomer,
                     paymentMode = paymentMode,
+                    discountValue = billDiscountValue,
                     creditAmountReceived = creditAmountReceived,
                     creditPaymentMethod = creditPaymentMethod,
                     cart = cart,
+                    imageLoader = { imageId ->
+                        val token = idToken
+                        if (token.isNullOrBlank()) null else api.productImage(token, imageId)
+                    },
                     onName = { customerName = it },
                     onPhone = {
                         customerPhone = it
@@ -1678,7 +1781,41 @@ private fun SalesApp(operationScope: CoroutineScope) {
                     },
                     onCustomerEmail = { customerEmail = it },
                     onCustomerAddress = { customerAddress = it },
+                    onSaveCustomer = {
+                        val token = idToken
+                        if (token == null || !api.isConfigured) {
+                            message = "Connect to Shop before saving customers."
+                        } else if (!savingCustomer) {
+                            val nameToSave = customerName.trim()
+                            val phoneToSave = customerPhone.trim()
+                            val emailToSave = customerEmail.trim()
+                            val addressToSave = customerAddress.trim()
+                            operationScope.launch {
+                                savingCustomer = true
+                                runCatchingCancellable {
+                                    withContext(Dispatchers.IO) {
+                                        api.createCustomer(token, nameToSave, phoneToSave, emailToSave, addressToSave)
+                                    }
+                                }.onSuccess { created ->
+                                    val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(created))
+                                    cachedCustomers.clear()
+                                    cachedCustomers.addAll(merged)
+                                    CustomerCache.save(context, merged)
+                                    customerName = created.name
+                                    customerPhone = created.phone
+                                    customerEmail = created.email
+                                    customerExists = true
+                                    customerMatches = listOf(created)
+                                    message = "${created.name} saved to customers."
+                                }.onFailure { error ->
+                                    message = error.message ?: "Could not save this customer."
+                                }
+                                savingCustomer = false
+                            }
+                        }
+                    },
                     onPaymentMode = { paymentMode = it },
+                    onDiscountValue = { billDiscountValue = it },
                     onCreditAmountReceived = { creditAmountReceived = it },
                     onCreditPaymentMethod = { creditPaymentMethod = it },
                     onSelectCustomer = { selected ->
@@ -1770,9 +1907,12 @@ private fun SalesApp(operationScope: CoroutineScope) {
                                 savingInvoice = true
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
-                                        val total = invoiceItems.sumOf { lineAmount(it.product.price, it.quantity) }
+                                        val subtotal = invoiceItems.sumOf { lineAmount(it.product.price, it.quantity) }
+                                        val discountInput = billDiscountValue.toDoubleOrNull() ?: 0.0
+                                        val discountAmount = discountInput.roundToInt()
+                                        val total = subtotal - discountAmount
                                         val amountReceived = if (invoicePayment == "Credit") invoiceCreditAmount else total
-                                        api.createInvoice(token, invoiceCustomer.name, invoiceCustomer.phone, invoiceCustomer.email, invoiceAddress, invoicePayment, invoiceItems, amountReceived, invoicePaymentMethod)
+                                        api.createInvoice(token, invoiceCustomer.name, invoiceCustomer.phone, invoiceCustomer.email, invoiceAddress, invoicePayment, invoiceItems, amountReceived, invoicePaymentMethod, discountInput)
                                     }
                                 }.onSuccess { created ->
                                     dismissKeyboard()
@@ -1787,7 +1927,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
                                         pdfUrl = created.pdfUrl,
                                         paid = created.paid,
                                         due = created.due,
-                                        items = invoiceItems.map { line ->
+                                        items = created.items.ifEmpty { invoiceItems.map { line ->
                                             InvoiceLine(
                                                 sku = line.product.sku,
                                                 name = line.product.name,
@@ -1798,7 +1938,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
                                                 lineTotal = lineAmount(line.product.price, line.quantity),
                                                 fractionalQuantity = line.product.fractionalQuantity
                                             )
-                                        }
+                                        } }
                                     )
                                     val cachedBills = BillCache.merge(BillCache.load(context), listOf(newBill))
                                     BillCache.save(context, cachedBills)
@@ -1820,6 +1960,7 @@ private fun SalesApp(operationScope: CoroutineScope) {
                                     customerMatches = emptyList()
                                     paymentMode = "Cash"
                                     creditAmountReceived = "0"
+                                    billDiscountValue = "0"
                                 }.onFailure { message = it.message ?: "Could not save the bill." }
                                 savingInvoice = false
                             }
@@ -1902,6 +2043,14 @@ private fun SalesApp(operationScope: CoroutineScope) {
                 )
                 Screen.Catalog -> CatalogScreen(
                     padding = insets, products = if (isAdministrator) products else products.filter { it.available }, live = api.isConfigured && idToken != null,
+                    query = catalogQuery,
+                    onQuery = { catalogQuery = it },
+                    onScan = {
+                        scanQr { scannedCode ->
+                            catalogQuery = scannedCode
+                            message = "Scanned $scannedCode"
+                        }
+                    },
                     syncing = productSyncing,
                     onSync = { syncProductsFromShop() },
                     isAdministrator = isAdministrator,
@@ -1909,28 +2058,51 @@ private fun SalesApp(operationScope: CoroutineScope) {
                     onRequestDeletion = { product -> requestEntryDeletion("PRODUCT", product.sku, product.name) },
                     onReviewRequest = { request, approve -> reviewEntryDeletionRequest("PRODUCT", request, approve) },
                     onAvailabilityChange = { product, available -> setClothAvailability(product, available) },
-                    uploadingPhotoSku = uploadingProductPhotoSku,
-                    onTakePhoto = { product ->
-                        if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
-                        else {
-                            productPhotoTargetSku = product.sku
-                            takeProductPhoto()
-                        }
-                    },
-                    onChoosePhoto = { product ->
-                        if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
-                        else {
-                            productPhotoTargetSku = product.sku
-                            productPhotoPicker.launch("image/*")
-                        }
-                    },
                     imageLoader = { id ->
                         val token = idToken ?: return@CatalogScreen null
                         runCatchingCancellable { withContext(Dispatchers.IO) { api.productImage(token, id) } }.getOrNull()
                     },
                     onProductQr = { qrPreviewProduct = it },
+                    onProductDetails = { product ->
+                        selectedCatalogProduct = product
+                        navigateTo(Screen.ProductDetail)
+                    },
                     onBack = { navigateBack() }
                 )
+                Screen.ProductDetail -> selectedCatalogProduct?.let { product ->
+                    ProductDetailScreen(
+                        padding = insets,
+                        product = product,
+                        isAdministrator = isAdministrator,
+                        connected = api.isConfigured && idToken != null,
+                        uploading = uploadingProductPhotoSku == product.sku,
+                        imageLoader = { id ->
+                            val token = idToken ?: return@ProductDetailScreen null
+                            runCatchingCancellable { withContext(Dispatchers.IO) { api.productImage(token, id) } }.getOrNull()
+                        },
+                        onTakePhoto = {
+                            if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
+                            else { productPhotoTargetSku = product.sku; takeProductPhoto() }
+                        },
+                        onChoosePhoto = {
+                            if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
+                            else { productPhotoTargetSku = product.sku; productPhotoPicker.launch("image/*") }
+                        },
+                        onAvailabilityChange = { setClothAvailability(product, it) },
+                        onAddStock = { quantity, reason, complete -> addStockToCloth(product, quantity, reason, complete) },
+                        onDelete = {
+                            if (isAdministrator) {
+                                setClothAvailability(product, false)
+                                navigateBack()
+                            } else requestEntryDeletion("PRODUCT", product.sku, product.name)
+                        },
+                        onProductQr = { qrPreviewProduct = product },
+                        onEdit = { name, category, price, fractional, complete ->
+                            updateClothDetails(product, name, category, price, fractional, complete)
+                        },
+                        onBack = { navigateBack() }
+                    )
+                }
             }
         }
         message?.let { text ->
@@ -2101,7 +2273,9 @@ private fun HomeScreen(
     onSignIn: () -> Unit,
     onNewBill: () -> Unit,
     onMakePayment: () -> Unit,
-    onCatalog: () -> Unit
+    onCatalog: () -> Unit,
+    onAddProduct: () -> Unit,
+    onPlaceOrder: () -> Unit
 ) {
     var userMenuExpanded by remember { mutableStateOf(false) }
     LazyColumn(
@@ -2185,35 +2359,64 @@ private fun HomeScreen(
         item {
             ActionCard(
                 title = if (isHindi) "बिल बनाएँ" else "Create a bill",
-                subtitle = if (isHindi) "ग्राहक चुनें और सामान जोड़ें" else "Choose a customer and add items",
+                subtitle = "",
                 icon = Icons.AutoMirrored.Rounded.ReceiptLong,
                 fill = Ink,
                 titleColor = Color.White,
                 detailColor = Color(0xFFD5E5EA),
-                onClick = onNewBill
+                onClick = onNewBill,
+                compact = true
+            )
+        }
+        item {
+            ActionCard(
+                title = if (isHindi) "ऑर्डर अनुरोध बनाएँ" else "Create order request",
+                subtitle = "",
+                icon = Icons.AutoMirrored.Rounded.ReceiptLong,
+                fill = Color(0xFFE7F2F7),
+                titleColor = Ink,
+                detailColor = Muted,
+                onClick = onPlaceOrder,
+                outline = true,
+                compact = true
+            )
+        }
+        item {
+            ActionCard(
+                title = if (isHindi) "नए कपड़े जोड़ें" else "Add new clothes",
+                subtitle = "",
+                icon = Icons.Rounded.AddShoppingCart,
+                fill = Color.White,
+                titleColor = Ink,
+                detailColor = Muted,
+                onClick = onAddProduct,
+                outline = true,
+                compact = true
             )
         }
         item {
             ActionCard(
                 title = if (isHindi) "भुगतान लें" else "Make a payment",
-                subtitle = if (isHindi) "ग्राहक का बकाया देखें और भुगतान दर्ज करें" else "See what a customer owes and record a payment",
+                subtitle = "",
                 icon = Icons.Rounded.AccountBalanceWallet,
                 fill = Color(0xFFE7F2F7),
                 titleColor = Ink,
                 detailColor = Muted,
-                onClick = onMakePayment
+                onClick = onMakePayment,
+                compact = true
             )
         }
         item {
             ActionCard(
                 title = if (isHindi) "कैटलॉग" else "Catalogue",
-                subtitle = if (isHindi) "ग्राहक को कपड़ों की तस्वीरें और कीमतें दिखाएँ" else "Show cloth photos and prices to a customer",
+                subtitle = "",
                 icon = Icons.Rounded.Storefront,
                 fill = Color.White,
                 titleColor = Ink,
                 detailColor = Muted,
                 onClick = onCatalog,
-                outline = true
+                outline = true,
+                compact = true
             )
         }
     }
@@ -2228,11 +2431,12 @@ private fun ActionCard(
     titleColor: Color,
     detailColor: Color,
     onClick: () -> Unit,
-    outline: Boolean = false
+    outline: Boolean = false,
+    compact: Boolean = false
 ) {
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(112.dp),
+        modifier = Modifier.fillMaxWidth().height(if (compact) 84.dp else 112.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = fill),
         border = if (outline) BorderStroke(1.dp, Color(0xFFD8E1E2)) else null,
@@ -2244,9 +2448,11 @@ private fun ActionCard(
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = titleColor)
-                Spacer(Modifier.height(4.dp))
-                Text(subtitle, fontSize = 15.sp, color = detailColor, lineHeight = 19.sp)
+                Text(title, fontSize = if (compact) 19.sp else 21.sp, fontWeight = FontWeight.Bold, color = titleColor)
+                if (!compact && subtitle.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(subtitle, fontSize = 15.sp, color = detailColor, lineHeight = 19.sp)
+                }
             }
         }
     }
@@ -2283,14 +2489,13 @@ private fun BillCenterScreen(padding: PaddingValues, onCreateBill: () -> Unit, o
 }
 
 @Composable
-private fun ProductCenterScreen(padding: PaddingValues, onAddProduct: () -> Unit, onSearch: () -> Unit, onCatalog: () -> Unit, onPlaceOrder: () -> Unit, onViewOrderRequests: () -> Unit) {
+private fun ProductCenterScreen(padding: PaddingValues, onAddProduct: () -> Unit, onCatalog: () -> Unit, onPlaceOrder: () -> Unit, onViewOrderRequests: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Spacer(Modifier.height(14.dp)); Text(tr("Cloth", "कपड़ा"), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink)
         ActionCard(tr("Add new clothes", "नए कपड़े जोड़ें"), tr("Save cloth details and create its QR", "कपड़े की जानकारी सहेजें और QR बनाएँ"), Icons.Rounded.AddShoppingCart, Ink, Color.White, Color(0xFFD5E5EA), onAddProduct)
         ActionCard(tr("Create order request", "ऑर्डर अनुरोध बनाएँ"), tr("Request cloth for a customer — no bill or payment", "ग्राहक के लिए कपड़ा मँगाएँ — बिल या भुगतान नहीं"), Icons.AutoMirrored.Rounded.ReceiptLong, Ink, Color.White, Color(0xFFD5E5EA), onPlaceOrder)
         ActionCard(tr("Order requests", "ऑर्डर अनुरोध"), tr("Tap to see the full items and customer details", "पूरे सामान और ग्राहक की जानकारी देखने के लिए टैप करें"), Icons.Rounded.Inventory2, Color.White, Ink, Muted, onViewOrderRequests, outline = true)
-        ActionCard(tr("Search / scan clothes", "कपड़े खोजें / स्कैन करें"), tr("Type a cloth code or scan its QR", "कपड़े का कोड लिखें या QR स्कैन करें"), Icons.Rounded.QrCode2, Color.White, Ink, Muted, onSearch, outline = true)
-        ActionCard(tr("Catalog", "कैटलॉग"), tr("Browse cloth photos and prices with a customer", "ग्राहक को कपड़ों की तस्वीरें और कीमतें दिखाएँ"), Icons.Rounded.Storefront, Color.White, Ink, Muted, onCatalog, outline = true)
+        ActionCard(tr("Cloth catalogue", "कपड़ों का कैटलॉग"), tr("Search, scan, and view cloth QR codes", "कपड़े खोजें, स्कैन करें और QR देखें"), Icons.Rounded.Storefront, Color.White, Ink, Muted, onCatalog, outline = true)
     }
 }
 
@@ -2452,6 +2657,9 @@ private fun CatalogScreen(
     padding: PaddingValues,
     products: List<Product>,
     live: Boolean,
+    query: String,
+    onQuery: (String) -> Unit,
+    onScan: () -> Unit,
     syncing: Boolean,
     onSync: () -> Unit,
     isAdministrator: Boolean,
@@ -2459,83 +2667,48 @@ private fun CatalogScreen(
     onRequestDeletion: (Product) -> Unit,
     onReviewRequest: (DeletionRequest, Boolean) -> Unit,
     onAvailabilityChange: (Product, Boolean) -> Unit,
-    uploadingPhotoSku: String?,
-    onTakePhoto: (Product) -> Unit,
-    onChoosePhoto: (Product) -> Unit,
     imageLoader: suspend (String) -> ByteArray?,
     onProductQr: (Product) -> Unit,
+    onProductDetails: (Product) -> Unit,
     onBack: () -> Unit
 ) {
     var showUnavailable by remember { mutableStateOf(false) }
-    val activeProducts = products.filter { it.available }
-    val unavailableProducts = products.filterNot { it.available }
+    val activeProducts = products.filter {
+        it.available && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.sku.contains(query, ignoreCase = true))
+    }
+    val unavailableProducts = products.filterNot { it.available }.filter {
+        query.isBlank() || it.name.contains(query, ignoreCase = true) || it.sku.contains(query, ignoreCase = true)
+    }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
-        Spacer(Modifier.height(14.dp)); ScreenHeader(tr("Cloth catalog", "कपड़ों का कैटलॉग"), onBack, onSync, syncing, live)
-        Text(tr("Show these clothes to your customer.", "ये कपड़े ग्राहक को दिखाएँ।"), color = Muted, fontSize = 15.sp, modifier = Modifier.padding(start = 8.dp, bottom = 10.dp))
+        Spacer(Modifier.height(14.dp)); ScreenHeader(tr("Cloth catalogue", "कपड़ों का कैटलॉग"), onBack, onSync, syncing, live)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQuery,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
+            placeholder = { Text(tr("Search cloth name or code", "कपड़े का नाम या कोड खोजें"), fontSize = 16.sp) },
+            leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            trailingIcon = {
+                IconButton(onClick = onScan, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Rounded.QrCode2, contentDescription = tr("Scan clothes", "कपड़े स्कैन करें"), tint = Teal)
+                }
+            },
+            shape = RoundedCornerShape(16.dp)
+        )
+        Spacer(Modifier.height(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
             if (isAdministrator) item {
                 AdminDeletionRequestsSection("PRODUCT", requests, onReviewRequest)
             }
             itemsIndexed(activeProducts, key = { index, product -> "product:$index:${product.sku}" }) { _, product ->
-                val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
-                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        ProductPhoto(
-                            sku = product.sku,
-                            imageId = product.imageId,
-                            imageLoader = imageLoader,
-                            modifier = Modifier.fillMaxWidth().height(190.dp),
-                            onTakePhoto = { onTakePhoto(product) },
-                            onChoosePhoto = { onChoosePhoto(product) },
-                            uploading = uploadingPhotoSku == product.sku
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text(product.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
-                        if (product.category.isNotBlank()) Text(product.category, fontSize = 14.sp, color = Muted)
-                        Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("₹${product.price}", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Teal, modifier = Modifier.weight(1f))
-                            val itemAvailable = product.available && product.stock > 0
-                            val stockLabel = when {
-                                !product.available -> tr("Unavailable · ${formatQuantity(product.stock)} left", "उपलब्ध नहीं · ${formatQuantity(product.stock)} बाकी")
-                                product.stock <= 0 -> tr("Out of stock · 0 left", "स्टॉक खत्म · 0 बाकी")
-                                else -> tr("Available · ${formatQuantity(product.stock)}${if (product.fractionalQuantity) " m" else ""} left", "उपलब्ध · ${formatQuantity(product.stock)}${if (product.fractionalQuantity) " मीटर" else ""} बाकी")
-                            }
-                            Text(stockLabel, color = if (itemAvailable) Teal else Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Image(
-                                qrBitmap,
-                                contentDescription = "QR code for ${product.name}",
-                                modifier = Modifier.size(92.dp).clickable { onProductQr(product) }
-                            )
-                            Column(Modifier.padding(start = 12.dp)) {
-                                Text(tr("Cloth QR", "कपड़े का QR"), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                                Text(tr("Scan to identify this cloth", "कपड़े की पहचान के लिए स्कैन करें"), color = Muted, fontSize = 14.sp)
-                                Text(product.sku, color = Teal, fontSize = 14.sp)
-                            }
-                        }
-                        if (isAdministrator) {
-                            OutlinedButton(
-                                onClick = { onAvailabilityChange(product, !product.available) },
-                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(if (product.available) tr("Make unavailable", "अनुपलब्ध करें") else tr("Make available", "उपलब्ध करें"))
-                            }
-                        }
-                        IconButton(
-                            onClick = { onRequestDeletion(product) },
-                            modifier = Modifier.align(Alignment.End).size(42.dp)
-                        ) {
-                            Icon(Icons.Rounded.DeleteOutline, contentDescription = tr("Request product deletion", "कपड़ा हटाने का अनुरोध"), tint = Color(0xFFB3261E))
-                        }
-                    }
-                }
+                CatalogCompactProductCard(
+                    product = product,
+                    imageLoader = imageLoader,
+                    onDetails = { onProductDetails(product) },
+                    onShowQr = { onProductQr(product) }
+                )
             }
             if (isAdministrator && unavailableProducts.isNotEmpty()) item {
                 OutlinedButton(
@@ -2563,10 +2736,325 @@ private fun CatalogScreen(
                 }
             }
             if (activeProducts.isEmpty() && (!isAdministrator || unavailableProducts.isEmpty())) item {
-                Text(if (live) tr("No available clothes found.", "कोई उपलब्ध कपड़ा नहीं मिला।") else tr("Connect to Shop to load the catalog.", "कैटलॉग देखने के लिए Shop से जुड़ें।"), color = Muted, fontSize = 17.sp)
+                Text(
+                    when {
+                        !live -> tr("Connect to Shop to load the catalogue.", "कैटलॉग लोड करने के लिए Shop से जुड़ें।")
+                        query.isNotBlank() -> tr("No clothes match this search.", "इस खोज से कोई कपड़ा नहीं मिला।")
+                        else -> tr("No available clothes found.", "कोई उपलब्ध कपड़ा नहीं मिला।")
+                    },
+                    color = Muted,
+                    fontSize = 17.sp
+                )
             }
         }
     }
+}
+
+@Composable
+private fun CatalogCompactProductCard(
+    product: Product,
+    imageLoader: suspend (String) -> ByteArray?,
+    onDetails: () -> Unit,
+    onShowQr: () -> Unit
+) {
+    val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
+    Card(
+        onClick = onDetails,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFE1E8E7))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BillClothThumbnail(product, imageLoader, Modifier.size(76.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(product.name, color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("₹${product.price}${if (product.fractionalQuantity) "/m" else ""}", color = Teal, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Surface(shape = RoundedCornerShape(12.dp), color = StockBadgeBlue) {
+                            Text(
+                                "${formatQuantity(product.stock)} ${if (product.fractionalQuantity) tr("m", "मीटर") else tr("left", "बाकी")}",
+                                color = Ink,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    Text(product.sku, color = Muted, fontSize = 12.sp, maxLines = 1)
+                }
+                Surface(
+                    onClick = onShowQr,
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFCCE3EC)),
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Image(
+                            qrBitmap,
+                            contentDescription = tr("Show QR", "QR दिखाएँ"),
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                }
+                Icon(Icons.Rounded.ChevronRight, contentDescription = tr("View cloth details", "कपड़े की जानकारी देखें"), tint = Ink)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProductDetailScreen(
+    padding: PaddingValues,
+    product: Product,
+    isAdministrator: Boolean,
+    connected: Boolean,
+    uploading: Boolean,
+    imageLoader: suspend (String) -> ByteArray?,
+    onTakePhoto: () -> Unit,
+    onChoosePhoto: () -> Unit,
+    onAvailabilityChange: (Boolean) -> Unit,
+    onAddStock: (Double, String, (Boolean) -> Unit) -> Unit,
+    onDelete: () -> Unit,
+    onProductQr: () -> Unit,
+    onEdit: (String, String, Int, Boolean, (Boolean) -> Unit) -> Unit,
+    onBack: () -> Unit
+) {
+    var showEdit by remember(product.sku) { mutableStateOf(false) }
+    var showDeleteConfirmation by remember(product.sku) { mutableStateOf(false) }
+    var savingEdit by remember(product.sku) { mutableStateOf(false) }
+    var showAddStock by remember(product.sku) { mutableStateOf(false) }
+    var savingStock by remember(product.sku) { mutableStateOf(false) }
+    val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
+        Spacer(Modifier.height(8.dp))
+        ScreenHeader(tr("Item details", "कपड़े की जानकारी"), onBack)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ProductPhoto(
+                sku = product.sku,
+                imageId = product.imageId,
+                imageLoader = imageLoader,
+                modifier = Modifier.fillMaxWidth().height(240.dp),
+                onTakePhoto = onTakePhoto,
+                onChoosePhoto = onChoosePhoto,
+                uploading = uploading
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(product.name, color = Ink, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                if (product.category.isNotBlank()) Text(product.category, color = Muted, fontSize = 16.sp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(tr("Price", "कीमत"), color = Muted, fontSize = 14.sp)
+                        Text("₹${product.price}${if (product.fractionalQuantity) "/m" else ""}", color = Teal, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = StockBadgeBlue) {
+                    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(tr("Stock left", "बाकी स्टॉक"), color = Muted, fontSize = 14.sp)
+                            Text("${formatQuantity(product.stock)} ${if (product.fractionalQuantity) tr("m", "मीटर") else tr("pieces", "पीस")}", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (isAdministrator) TextButton(onClick = { showAddStock = true }, enabled = connected) {
+                            Icon(Icons.Rounded.Add, contentDescription = null)
+                            Text(tr("Add", "जोड़ें"))
+                        }
+                    }
+                }
+            }
+            DetailLine(tr("Cloth ID", "कपड़े की आईडी"), product.sku)
+            Card(
+                onClick = onProductQr,
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Color(0xFFE1E8E7))
+            ) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Image(qrBitmap, contentDescription = tr("Show QR", "QR दिखाएँ"), modifier = Modifier.size(88.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Cloth QR", "कपड़े का QR"), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(tr("Tap to view or share the QR label.", "QR लेबल देखने या साझा करने के लिए टैप करें।"), color = Muted, fontSize = 14.sp)
+                        TextButton(onClick = onProductQr, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)) {
+                            Text(tr("Show QR", "QR दिखाएँ"))
+                        }
+                    }
+                }
+            }
+            if (isAdministrator) {
+                Surface(shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(tr("Availability", "उपलब्धता"), color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(tr("Show this cloth in the catalogue", "इस कपड़े को कैटलॉग में दिखाएँ"), color = Muted, fontSize = 13.sp)
+                        }
+                        Switch(checked = product.available, onCheckedChange = onAvailabilityChange, enabled = connected)
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (isAdministrator) OutlinedButton(
+                    onClick = { showEdit = true },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    enabled = connected,
+                    shape = RoundedCornerShape(13.dp)
+                ) {
+                    Icon(Icons.Rounded.Edit, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(tr("Edit", "बदलें"))
+                }
+                OutlinedButton(
+                    onClick = { showDeleteConfirmation = true },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    enabled = connected,
+                    shape = RoundedCornerShape(13.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB3261E))
+                ) {
+                    Icon(Icons.Rounded.DeleteOutline, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isAdministrator) tr("Delete", "हटाएँ") else tr("Request delete", "हटाने का अनुरोध"))
+                }
+            }
+        }
+    }
+    if (showEdit) {
+        EditClothDialog(
+            product = product,
+            saving = savingEdit,
+            onDismiss = { if (!savingEdit) showEdit = false },
+            onSave = { name, category, price, fractional ->
+                savingEdit = true
+                onEdit(name, category, price, fractional) { success ->
+                    savingEdit = false
+                    if (success) showEdit = false
+                }
+            }
+        )
+    }
+    if (showAddStock) {
+        AddStockDialog(
+            product = product,
+            saving = savingStock,
+            onDismiss = { if (!savingStock) showAddStock = false },
+            onSave = { quantity, reason ->
+                savingStock = true
+                onAddStock(quantity, reason) { success ->
+                    savingStock = false
+                    if (success) showAddStock = false
+                }
+            }
+        )
+    }
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text(if (isAdministrator) tr("Remove this cloth?", "यह कपड़ा हटाएँ?" ) else tr("Request cloth removal?", "कपड़ा हटाने का अनुरोध करें?"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    if (isAdministrator) tr("It will be hidden from the catalogue. Stock and past bills will remain in Shop.", "यह कैटलॉग से छिप जाएगा। स्टॉक और पुराने बिल Shop में बने रहेंगे।")
+                    else tr("The administrator will review this request before the cloth is removed.", "कपड़ा हटाने से पहले प्रशासक इस अनुरोध की समीक्षा करेंगे।"),
+                    color = Muted
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirmation = false; onDelete() }) {
+                    Text(if (isAdministrator) tr("Make unavailable", "अनुपलब्ध करें") else tr("Send request", "अनुरोध भेजें"), color = Color(0xFFB3261E))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirmation = false }) { Text(tr("Cancel", "रद्द करें")) } }
+        )
+    }
+}
+
+@Composable
+private fun AddStockDialog(
+    product: Product,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Double, String) -> Unit
+) {
+    var quantity by remember(product.sku) { mutableStateOf("") }
+    var reason by remember(product.sku) { mutableStateOf("Restock") }
+    val parsedQuantity = quantity.toDoubleOrNull()
+    val valid = parsedQuantity != null && parsedQuantity > 0 && parsedQuantity <= 100000 &&
+        (product.fractionalQuantity || parsedQuantity % 1.0 == 0.0)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr("Add stock", "स्टॉक जोड़ें"), color = Ink, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${product.name} · ${tr("Current", "अभी")}: ${formatQuantity(product.stock)} ${if (product.fractionalQuantity) tr("m", "मीटर") else tr("pieces", "पीस")}", color = Muted)
+                OutlinedTextField(
+                    value = quantity,
+                    onValueChange = { value -> quantity = value.filter { it.isDigit() || (product.fractionalQuantity && it == '.') }.let { text -> if (text.count { it == '.' } <= 1) text else quantity } },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(if (product.fractionalQuantity) tr("Metres to add", "जोड़ने के मीटर") else tr("Pieces to add", "जोड़ने के पीस")) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { reason = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(tr("Reason", "कारण")) },
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(parsedQuantity ?: 0.0, reason.trim().ifBlank { "Restock" }) }, enabled = valid && !saving) {
+                Text(if (saving) tr("Saving…", "सहेज रहे हैं…") else tr("Add stock", "स्टॉक जोड़ें"))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(tr("Cancel", "रद्द करें")) } }
+    )
+}
+
+@Composable
+private fun EditClothDialog(
+    product: Product,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, String, Int, Boolean) -> Unit
+) {
+    var name by remember(product.sku) { mutableStateOf(product.name) }
+    var category by remember(product.sku) { mutableStateOf(product.category) }
+    var price by remember(product.sku) { mutableStateOf(product.price.toString()) }
+    var fractional by remember(product.sku) { mutableStateOf(product.fractionalQuantity) }
+    val valid = name.isNotBlank() && category.isNotBlank() && (price.toIntOrNull() ?: -1) >= 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr("Edit cloth", "कपड़ा बदलें"), color = Ink, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Cloth name", "कपड़े का नाम")) }, singleLine = true)
+                OutlinedTextField(category, { category = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Category", "श्रेणी")) }, singleLine = true)
+                OutlinedTextField(
+                    price,
+                    { price = it.filter(Char::isDigit) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(tr("Selling price (₹)", "बिक्री कीमत (₹)")) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("Sold by metre", "मीटर के हिसाब से बेचें"), Modifier.weight(1f), color = Ink)
+                    Switch(checked = fractional, onCheckedChange = { fractional = it })
+                }
+                Text(tr("Current stock stays unchanged.", "मौजूदा स्टॉक में बदलाव नहीं होगा।"), color = Muted, fontSize = 13.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim(), category.trim(), price.toIntOrNull() ?: 0, fractional) }, enabled = valid && !saving) {
+                Text(if (saving) tr("Saving…", "सहेज रहे हैं…") else tr("Save changes", "बदलाव सहेजें"))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(tr("Cancel", "रद्द करें")) } }
+    )
 }
 
 @Composable
@@ -3129,18 +3617,20 @@ private fun SearchScreen(
     refreshing: Boolean,
     onSync: () -> Unit,
     onQuery: (String) -> Unit,
-    onShareQrLabels: (List<Product>) -> Unit,
-    onProductQr: (Product) -> Unit,
+    imageLoader: suspend (String) -> ByteArray?,
     onScan: () -> Unit,
+    onProductQr: (Product) -> Unit,
     onAddToBill: (Product) -> Unit
 ) {
+    var selectedProduct by remember { mutableStateOf<Product?>(null) }
+    val keyboard = LocalSoftwareKeyboardController.current
     val results = if (query.isBlank()) products else products.filter {
             it.name.contains(query, ignoreCase = true) || it.sku.contains(query, ignoreCase = true)
     }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(tr("Find a cloth", "कपड़ा खोजें"), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
+            Text(tr("Search clothes", "कपड़े खोजें"), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
             IconButton(onClick = onSync, enabled = live && !refreshing, modifier = Modifier.size(48.dp)) {
                 if (refreshing) CircularProgressIndicator(modifier = Modifier.size(21.dp), strokeWidth = 2.dp, color = Teal)
                 else Icon(Icons.Rounded.Refresh, contentDescription = tr("Sync clothes", "कपड़े सिंक करें"), tint = if (live) Teal else Muted)
@@ -3155,38 +3645,152 @@ private fun SearchScreen(
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 19.sp),
             placeholder = { Text(tr("Type cloth name or code", "कपड़े का नाम या कोड लिखें"), fontSize = 17.sp) },
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            trailingIcon = {
+                IconButton(onClick = onScan, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Rounded.QrCode2, contentDescription = tr("Scan clothes", "कपड़े स्कैन करें"), tint = Teal)
+                }
+            },
             shape = RoundedCornerShape(16.dp)
         )
         Spacer(Modifier.height(10.dp))
-        OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(Icons.Rounded.QrCode2, null); Spacer(Modifier.width(10.dp)); Text(tr("Scan cloth QR", "कपड़े का QR स्कैन करें"), fontSize = 18.sp)
-        }
-        Spacer(Modifier.height(12.dp))
-        Surface(shape = RoundedCornerShape(12.dp), color = SoftBlue) {
-            Text(
-                when {
-                    !live -> tr("Sample clothes · live stock appears after connecting Shop", "नमूना कपड़े · Shop से जुड़ने पर लाइव स्टॉक दिखेगा")
-                    refreshing -> tr("Showing saved clothes · checking latest price and stock…", "सहेजे कपड़े दिख रहे हैं · नई कीमत और स्टॉक जाँच रहे हैं…")
-                    else -> tr("Prices and availability synced from Shop", "कीमत और उपलब्धता Shop से सिंक है")
-                },
-                Modifier.fillMaxWidth().padding(12.dp), fontSize = 14.sp, color = Ink
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { onShareQrLabels(products) },
-            enabled = products.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Icon(Icons.Rounded.Print, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(tr("Create & share QR PDF (${products.size})", "QR PDF बनाएँ और साझा करें (${products.size})"), fontSize = 16.sp)
-        }
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
-            items(results) { product -> ProductCard(product, live, orderMode, onAdd = { onAddToBill(product) }, onQr = { onProductQr(product) }) }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
+            items(results, key = { it.sku }) { product ->
+                BillSearchProductCard(
+                    product = product,
+                    orderMode = orderMode,
+                    imageLoader = imageLoader,
+                    onAdd = { onAddToBill(product) },
+                    onDetails = { keyboard?.hide(); selectedProduct = product }
+                )
+            }
             if (results.isEmpty()) item { Text(tr("No cloth found. Try another name or code.", "कपड़ा नहीं मिला। दूसरा नाम या कोड आज़माएँ।"), color = Muted, fontSize = 17.sp, modifier = Modifier.padding(8.dp)) }
+        }
+    }
+    selectedProduct?.let { product ->
+        AlertDialog(
+            onDismissRequest = { selectedProduct = null },
+            title = { Text(product.name, color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    BillClothThumbnail(product, imageLoader, Modifier.fillMaxWidth().height(190.dp))
+                    if (product.category.isNotBlank()) DetailLine(tr("Category", "श्रेणी"), product.category)
+                    DetailLine(tr("Cloth ID", "कपड़े की आईडी"), product.sku)
+                    DetailLine(
+                        tr("Price", "कीमत"),
+                        "₹${product.price}${if (product.fractionalQuantity) tr(" per metre", " प्रति मीटर") else tr(" per piece", " प्रति पीस")}"
+                    )
+                    DetailLine(
+                        tr("Stock left", "बाकी स्टॉक"),
+                        "${formatQuantity(product.stock)}${if (product.fractionalQuantity) tr(" metres", " मीटर") else tr(" pieces", " पीस")}"
+                    )
+                    val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Image(
+                            qrBitmap,
+                            contentDescription = tr("Cloth QR", "कपड़े का QR"),
+                            modifier = Modifier.size(84.dp).clickable {
+                                selectedProduct = null
+                                onProductQr(product)
+                            }
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(tr("Cloth QR", "कपड़े का QR"), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(tr("Tap to create or share its QR label.", "QR लेबल बनाने या साझा करने के लिए टैप करें।"), color = Muted, fontSize = 13.sp)
+                            TextButton(
+                                onClick = {
+                                    selectedProduct = null
+                                    onProductQr(product)
+                                },
+                                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                            ) { Text(tr("Create & share QR PDF", "QR PDF बनाएँ और साझा करें")) }
+                        }
+                    }
+                    if (product.stock <= 0) Text(tr("Out of stock", "स्टॉक खत्म"), color = Color(0xFFB42318), fontWeight = FontWeight.SemiBold)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { selectedProduct = null; onAddToBill(product) },
+                    enabled = product.stock > 0
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (orderMode) tr("Add to order", "ऑर्डर में जोड़ें") else tr("Add to bill", "बिल में जोड़ें"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedProduct = null }) { Text(tr("Close", "बंद करें")) }
+            }
+        )
+    }
+}
+
+@Composable
+private fun BillSearchProductCard(
+    product: Product,
+    orderMode: Boolean,
+    imageLoader: suspend (String) -> ByteArray?,
+    onAdd: () -> Unit,
+    onDetails: () -> Unit
+) {
+    Card(
+        onClick = onDetails,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFE1E8E7))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            BillClothThumbnail(product, imageLoader, Modifier.size(76.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(product.name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
+                Text(tr("ID", "आईडी") + ": ${product.sku}", fontSize = 13.sp, color = Muted, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("₹${product.price}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
+                    Spacer(Modifier.width(7.dp))
+                    Box(Modifier.width(1.dp).height(25.dp).background(Color(0xFFCCD2D8)))
+                    Spacer(Modifier.width(7.dp))
+                    val stockUnit = when {
+                        product.fractionalQuantity -> tr("m", "मीटर")
+                        product.stock == 1.0 -> tr("pc", "पीस")
+                        else -> tr("pcs", "पीस")
+                    }
+                    Surface(shape = RoundedCornerShape(14.dp), color = StockBadgeBlue) {
+                        Row(
+                            Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                if (product.fractionalQuantity) Icons.Rounded.Straighten else Icons.Rounded.Inventory2,
+                                contentDescription = null,
+                                tint = StockIconBlue,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(tr("Stock:", "स्टॉक:"), fontSize = 12.sp, color = Ink, maxLines = 1)
+                            Text("${formatQuantity(product.stock)} $stockUnit", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
+                        }
+                    }
+                }
+            }
+            IconButton(
+                onClick = onAdd,
+                enabled = product.stock > 0,
+                modifier = Modifier.size(48.dp).background(if (product.stock > 0) ClothActionBlue else Color(0xFFE7E9EC), CircleShape)
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = if (orderMode) tr("Add to order", "ऑर्डर में जोड़ें") else tr("Add to bill", "बिल में जोड़ें"),
+                    tint = if (product.stock > 0) Ink else Muted,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
         }
     }
 }
@@ -3252,72 +3856,70 @@ private fun AddProductScreen(
     val stockPrecisionValid = parsedStock != null && kotlin.math.abs(parsedStock * 1000 - (parsedStock * 1000).roundToInt()) < 0.001
     val validOpeningStock = parsedStock != null && parsedStock >= 0 && parsedStock <= 100000 &&
         stockPrecisionValid && (fractionalQuantity || parsedStock % 1.0 == 0.0)
-    LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp), contentPadding = PaddingValues(top = 14.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { ScreenHeader(tr("Add a cloth", "कपड़ा जोड़ें"), onBack); Text(tr("Enter the details. Add a picture if you have one.", "जानकारी भरें। चाहें तो तस्वीर भी जोड़ें।"), color = Muted, fontSize = 15.sp) }
-        item {
+    Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 18.dp).padding(top = 8.dp, bottom = 78.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            ScreenHeader(tr("Add a cloth", "कपड़ा जोड़ें"), onBack)
             ProductPhoto(
                 sku = "new-product-preview",
                 imageId = "",
                 imageLoader = { null },
-                modifier = Modifier.fillMaxWidth().height(190.dp),
+                modifier = Modifier.fillMaxWidth().height(104.dp),
                 selectedPhoto = photo,
                 onTakePhoto = onTakePhoto,
                 onChoosePhoto = onChoosePhoto
             )
-        }
-        item { OutlinedTextField(name, onName, Modifier.fillMaxWidth(), label = { Text(tr("Cloth name", "कपड़े का नाम")) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp), shape = RoundedCornerShape(14.dp)) }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(tr("Category (optional)", "श्रेणी (वैकल्पिक)"), fontSize = 14.sp, color = Muted)
-                OutlinedButton(
-                    onClick = { categorySearch = ""; categoryPickerOpen = true },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, Muted),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Text(
-                        category.ifBlank { tr("Choose a category", "श्रेणी चुनें") },
-                        modifier = Modifier.weight(1f),
-                        fontSize = 16.sp,
-                        color = if (category.isBlank()) Muted else Ink
-                    )
-                    Text("⌄", fontSize = 22.sp, color = Ink)
-                }
+            OutlinedTextField(name, onName, Modifier.fillMaxWidth(), label = { Text(tr("Cloth name", "कपड़े का नाम")) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp), shape = RoundedCornerShape(14.dp))
+            OutlinedButton(
+                onClick = { categorySearch = ""; categoryPickerOpen = true },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp)
+            ) {
+                Text(category.ifBlank { tr("Choose category (optional)", "श्रेणी चुनें (वैकल्पिक)") }, Modifier.weight(1f), fontSize = 15.sp, color = if (category.isBlank()) Muted else Ink)
+                Text("⌄", fontSize = 20.sp, color = Ink)
             }
-        }
-        item { OutlinedTextField(price, onPrice, Modifier.fillMaxWidth(), label = { Text(if (fractionalQuantity) tr("Selling price per metre (₹)", "प्रति मीटर बेचने की कीमत (₹)") else tr("Selling price (₹)", "बेचने की कीमत (₹)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp), shape = RoundedCornerShape(14.dp)) }
-        item { OutlinedTextField(cost, onCost, Modifier.fillMaxWidth(), label = { Text(if (fractionalQuantity) tr("Purchase cost per metre (₹)", "प्रति मीटर खरीद कीमत (₹)") else tr("Purchase cost per item (₹)", "एक पीस की खरीद कीमत (₹)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp), shape = RoundedCornerShape(14.dp)) }
-        item {
-            Surface(shape = RoundedCornerShape(14.dp), color = SoftBlue, modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(tr("Allow decimal quantities", "दशमलव मात्रा की अनुमति दें"), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(tr("For cloth sold by metre, e.g. 1.5 m", "मीटर से बिकने वाले कपड़े के लिए, जैसे 1.5 मीटर"), color = Muted, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    price, onPrice, Modifier.weight(1f),
+                    label = { Text(if (fractionalQuantity) tr("Price / metre ₹", "कीमत / मीटर ₹") else tr("Selling price ₹", "बेचने की कीमत ₹"), maxLines = 1, fontSize = 13.sp) },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
+                )
+                OutlinedTextField(
+                    cost, onCost, Modifier.weight(1f),
+                    label = { Text(if (fractionalQuantity) tr("Cost / metre ₹", "लागत / मीटर ₹") else tr("Cost price ₹", "खरीद कीमत ₹"), maxLines = 1, fontSize = 13.sp) },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    stock, onStock, Modifier.weight(0.9f),
+                    label = { Text(if (fractionalQuantity) tr("Stock (metres)", "स्टॉक (मीटर)") else tr("Starting stock", "शुरुआती स्टॉक"), maxLines = 1, fontSize = 13.sp) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = if (fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
+                )
+                Surface(Modifier.weight(1.1f), shape = RoundedCornerShape(14.dp), color = SoftBlue) {
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr("Decimal quantity", "दशमलव मात्रा"), Modifier.weight(1f), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                        Switch(checked = fractionalQuantity, onCheckedChange = onFractionalQuantity)
                     }
-                    Switch(checked = fractionalQuantity, onCheckedChange = onFractionalQuantity)
                 }
             }
         }
-        item {
-            OutlinedTextField(
-                stock,
-                onStock,
-                Modifier.fillMaxWidth(),
-                label = { Text(if (fractionalQuantity) tr("Starting quantity (metres)", "शुरुआती मात्रा (मीटर)") else tr("Starting quantity", "शुरुआती मात्रा")) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = if (fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number),
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
-                shape = RoundedCornerShape(14.dp)
-            )
-        }
-        item {
-            Button(onClick = onSave, enabled = connected && !saving && name.isNotBlank() && price.isNotBlank() && cost.isNotBlank() && validOpeningStock, modifier = Modifier.fillMaxWidth().height(60.dp), shape = RoundedCornerShape(16.dp)) {
-                if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
-                else Icon(Icons.Rounded.CheckCircle, null)
-                Spacer(Modifier.width(10.dp)); Text(if (saving) tr("Saving cloth…", "कपड़ा सहेज रहे हैं…") else tr("Save cloth", "कपड़ा सहेजें"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(if (connected) tr("Saving adds this cloth to Shop and shows its QR code.", "सहेजने पर कपड़ा Shop में जुड़ जाएगा और QR दिखेगा।") else tr("Connect to Shop and sign in before saving.", "सहेजने से पहले Shop से जुड़कर साइन इन करें।"), fontSize = 14.sp, color = Muted)
+        Button(
+            onClick = onSave,
+            enabled = connected && !saving && name.isNotBlank() && price.isNotBlank() && cost.isNotBlank() && validOpeningStock,
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp).height(58.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+            else Icon(Icons.Rounded.CheckCircle, null)
+            Spacer(Modifier.width(10.dp)); Text(if (saving) tr("Saving cloth…", "कपड़ा सहेज रहे हैं…") else tr("Save cloth", "कपड़ा सहेजें"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
         }
     }
     if (categoryPickerOpen) {
@@ -3354,6 +3956,7 @@ private fun AddProductScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BillScreen(
     padding: PaddingValues,
@@ -3369,7 +3972,9 @@ private fun BillScreen(
     customerSearching: Boolean,
     customerMatches: List<ShopCustomer>,
     saving: Boolean,
+    savingCustomer: Boolean,
     paymentMode: String,
+    discountValue: String,
     creditAmountReceived: String,
     creditPaymentMethod: String,
     cart: List<CartLine>,
@@ -3377,36 +3982,82 @@ private fun BillScreen(
     onPhone: (String) -> Unit,
     onCustomerEmail: (String) -> Unit,
     onCustomerAddress: (String) -> Unit,
+    onSaveCustomer: () -> Unit,
     onPaymentMode: (String) -> Unit,
+    onDiscountValue: (String) -> Unit,
     onCreditAmountReceived: (String) -> Unit,
     onCreditPaymentMethod: (String) -> Unit,
     onSelectCustomer: (ShopCustomer) -> Unit,
     onPickContact: () -> Unit,
     onScan: () -> Unit,
     onFindProduct: () -> Unit,
+    imageLoader: suspend (String) -> ByteArray?,
     onQuantity: (String, Double) -> Unit,
     onSetQuantity: (String, Double) -> Unit,
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
     var selectedProductDetails by remember { mutableStateOf<Product?>(null) }
-    val total = cart.sumOf { lineAmount(it.product.price, it.quantity) }
+    var showNewCustomerDialog by remember { mutableStateOf(false) }
+    var promptedCustomerPhone by remember { mutableStateOf("") }
+    val subtotal = cart.sumOf { lineAmount(it.product.price, it.quantity) }
+    val parsedDiscount = discountValue.toDoubleOrNull() ?: 0.0
+    val discountAmount = parsedDiscount.roundToInt()
+    val total = subtotal - discountAmount
+    val validDiscount = discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 && discountAmount <= subtotal && total > 0
     val validCart = cart.isNotEmpty() && cart.all(::validCartQuantity)
     val paidNow = if (paymentMode == "Credit") creditAmountReceived.toIntOrNull() else total
     val validCreditAmount = paymentMode != "Credit" || (paidNow != null && paidNow in 0..total)
-    val phoneFocus = remember { FocusRequester() }
+    val hasCreditPaymentReceived = paymentMode == "Credit" && paidNow != null && paidNow > 0
+    val canSubmit = !saving && customerPhone.isNotBlank() && customerExists != null &&
+        (customerExists || customerName.isNotBlank()) && validCart &&
+        (orderMode || (validCreditAmount && validDiscount))
+    val submitHint = when {
+        saving -> if (orderMode) tr("Sending order request…", "ऑर्डर अनुरोध भेज रहे हैं…") else tr("Creating bill…", "बिल बना रहे हैं…")
+        customerPhone.isBlank() -> tr("Enter customer phone to continue", "आगे बढ़ने के लिए ग्राहक का फ़ोन नंबर लिखें")
+        customerExists == null -> tr("Checking customer details…", "ग्राहक की जानकारी जाँची जा रही है…")
+        customerExists == false && customerName.isBlank() -> tr("Enter customer name to continue", "आगे बढ़ने के लिए ग्राहक का नाम लिखें")
+        cart.isEmpty() -> tr("Add at least one cloth to continue", "आगे बढ़ने के लिए कम से कम एक कपड़ा जोड़ें")
+        !validCart -> tr("Check the cloth quantities", "कपड़ों की मात्रा जाँचें")
+        !orderMode && !validDiscount -> tr("Enter a valid discount", "सही छूट दर्ज करें")
+        !orderMode && !validCreditAmount -> tr("Enter a valid amount received", "मिली हुई सही राशि दर्ज करें")
+        else -> when {
+            orderMode -> tr("Ready to send the order request", "ऑर्डर अनुरोध भेजने के लिए तैयार")
+            connected -> tr("Ready to create this bill", "बिल बनाने के लिए तैयार")
+            else -> tr("Preview only — connect to Shop before saving", "केवल पूर्वावलोकन — सहेजने से पहले Shop से जुड़ें")
+        }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    LaunchedEffect(Unit) {
-        delay(250)
-        phoneFocus.requestFocus()
-        keyboard?.show()
+    val discountBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val creditAmountBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val billListState = rememberLazyListState()
+    val screenScope = rememberCoroutineScope()
+    LaunchedEffect(customerExists, customerSearching, customerPhone, customerMatches.size) {
+        val normalizedPhone = CustomerCache.normalizePhone(customerPhone)
+        if (customerExists == false && !customerSearching && normalizedPhone.length >= 8 &&
+            promptedCustomerPhone != normalizedPhone
+        ) {
+            promptedCustomerPhone = normalizedPhone
+            keyboard?.hide()
+            focusManager.clearFocus()
+            showNewCustomerDialog = true
+        }
     }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 14.dp, bottom = 22.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    LaunchedEffect(customerExists) {
+        if (customerExists == true) {
+            showNewCustomerDialog = false
+            keyboard?.hide()
+            focusManager.clearFocus()
+        }
+    }
+    Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
+      LazyColumn(
+        state = billListState,
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 142.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
         item {
             ScreenHeader(if (orderMode) tr("Place an order", "ऑर्डर भेजें") else tr("Create a bill", "बिल बनाएँ"), onBack)
             if (orderMode) Text(
@@ -3417,33 +4068,49 @@ private fun BillScreen(
         item {
             SectionTitle("1", tr("Customer", "ग्राहक"))
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = customerPhone,
-                onValueChange = onPhone,
-                modifier = Modifier.fillMaxWidth().focusRequester(phoneFocus),
-                label = { Text(tr("Phone number", "फ़ोन नंबर")) },
-                placeholder = { Text(tr("Type number", "नंबर लिखें")) },
-                singleLine = true,
-                readOnly = customerExists == true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
-                shape = RoundedCornerShape(14.dp),
-                trailingIcon = {
-                    if (customerExists == true) {
-                        IconButton(onClick = {
-                            keyboard?.hide()
-                            focusManager.clearFocus()
-                            onPhone("")
-                        }) { Icon(Icons.Rounded.Edit, tr("Change customer", "ग्राहक बदलें")) }
-                    } else {
-                        IconButton(onClick = onPickContact) { Icon(Icons.Rounded.Contacts, "Choose contact") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = customerPhone,
+                    onValueChange = onPhone,
+                    modifier = Modifier.weight(if (customerExists == true) 0.5f else 1f),
+                    label = { Text(tr("Phone number", "फ़ोन नंबर")) },
+                    placeholder = { Text(tr("Type number", "नंबर लिखें")) },
+                    singleLine = true,
+                    readOnly = customerExists == true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+                    shape = RoundedCornerShape(14.dp),
+                    trailingIcon = {
+                        if (customerExists == true) {
+                            IconButton(onClick = {
+                                keyboard?.hide()
+                                focusManager.clearFocus()
+                                onPhone("")
+                            }) { Icon(Icons.Rounded.Edit, tr("Change customer", "ग्राहक बदलें")) }
+                        } else {
+                            IconButton(onClick = onPickContact) { Icon(Icons.Rounded.Contacts, "Choose contact") }
+                        }
+                    }
+                )
+                if (customerExists == true) {
+                    Surface(
+                        modifier = Modifier.weight(0.5f).height(56.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = SoftGreen
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.AccountCircle, contentDescription = null, tint = Teal, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(customerName, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        }
                     }
                 }
-            )
-            when {
-                customerSearching -> Text(tr("Checking saved customers…", "सहेजे ग्राहक खोज रहे हैं…"), color = Muted, fontSize = 14.sp)
-                customerExists == true -> Text(tr("Saved customer found", "सहेजा हुआ ग्राहक मिल गया"), color = Teal, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                customerExists == false -> Text(tr("New customer — enter their name below", "नया ग्राहक — नीचे नाम लिखें"), color = Muted, fontSize = 14.sp)
+            }
+            if (customerSearching) Text(tr("Checking saved customers…", "सहेजे ग्राहक खोज रहे हैं…"), color = Muted, fontSize = 14.sp)
+            if (customerExists == false && !customerSearching && !showNewCustomerDialog) {
+                TextButton(onClick = { showNewCustomerDialog = true }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                    Text(tr("Add customer details", "ग्राहक की जानकारी जोड़ें"), color = Teal, fontSize = 14.sp)
+                }
             }
             if (customerMatches.isNotEmpty() && customerExists != true) {
                 Spacer(Modifier.height(4.dp))
@@ -3467,35 +4134,25 @@ private fun BillScreen(
                     }
                 }
             }
-            if (customerExists == true) {
-                Surface(shape = RoundedCornerShape(14.dp), color = SoftGreen, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(tr("Saved customer", "सहेजा हुआ ग्राहक"), color = Muted, fontSize = 14.sp)
-                        Text(customerName, color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            } else if (customerExists == false) {
-                Spacer(Modifier.height(4.dp))
-                Text(tr("New customer details", "नए ग्राहक की जानकारी"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(customerName, onName, Modifier.fillMaxWidth(), label = { Text(tr("Customer name", "ग्राहक का नाम")) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp), shape = RoundedCornerShape(14.dp))
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(customerEmail, onCustomerEmail, Modifier.fillMaxWidth(), label = { Text(tr("Email (optional)", "ईमेल (वैकल्पिक)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp), shape = RoundedCornerShape(14.dp))
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(customerAddress, onCustomerAddress, Modifier.fillMaxWidth(), label = { Text(tr("City or address (optional)", "शहर या पता (वैकल्पिक)")) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp), shape = RoundedCornerShape(14.dp))
-            }
         }
         item {
             Divider(color = Color(0xFFDDE5E4))
             Spacer(Modifier.height(4.dp))
             SectionTitle("2", tr("Add items", "सामान जोड़ें"))
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onScan, modifier = Modifier.weight(1f).height(58.dp), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.QrCode2, null); Spacer(Modifier.width(7.dp)); Text(tr("Scan QR", "QR स्कैन करें"), fontSize = 16.sp)
-                }
-                OutlinedButton(onClick = onFindProduct, modifier = Modifier.weight(1f).height(58.dp), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.Search, null); Spacer(Modifier.width(7.dp)); Text(tr("Search", "खोजें"), fontSize = 16.sp)
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(58.dp).clickable(onClick = onFindProduct),
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+                border = BorderStroke(1.dp, Muted)
+            ) {
+                Row(Modifier.fillMaxSize().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted)
+                    Spacer(Modifier.width(10.dp))
+                    Text(tr("Search cloth name or code", "कपड़े का नाम या कोड खोजें"), Modifier.weight(1f), color = Muted, fontSize = 16.sp, maxLines = 1)
+                    IconButton(onClick = onScan, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Rounded.QrCode2, contentDescription = tr("Scan cloth QR", "कपड़े का QR स्कैन करें"), tint = Teal)
+                    }
                 }
             }
         }
@@ -3515,14 +4172,66 @@ private fun BillScreen(
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     border = BorderStroke(1.dp, Color(0xFFE1E8E7))
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(line.product.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Ink)
-                            Text("${line.product.sku} · ₹${line.product.price}${if (line.product.fractionalQuantity) "/m" else " each"}", color = Muted, fontSize = 14.sp)
-                            Text(tr("Tap for cloth details", "कपड़े की जानकारी के लिए टैप करें"), color = Teal, fontSize = 12.sp)
+                    Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BillClothThumbnail(line.product, imageLoader, Modifier.size(64.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(line.product.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Ink, maxLines = 1)
+                            Text("${line.product.sku} · ₹${line.product.price}${if (line.product.fractionalQuantity) " / m" else " each"}", color = Muted, fontSize = 12.sp, maxLines = 1)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CartQuantityControl(line, onQuantity, onSetQuantity, compact = true)
+                                Spacer(Modifier.weight(1f))
+                                Text("₹${lineAmount(line.product.price, line.quantity)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
                         }
-                        CartQuantityControl(line, onQuantity, onSetQuantity)
                     }
+                }
+            }
+        }
+        if (!orderMode) item {
+            Surface(shape = RoundedCornerShape(18.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
+                Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr("Total amount", "कुल राशि"), Modifier.weight(1f), fontSize = 16.sp, color = Ink)
+                        Text("₹$subtotal", fontSize = 16.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(tr("Discount", "छूट"), fontSize = 16.sp, color = Ink)
+                            Text(tr("Enter amount in ₹", "राशि ₹ में लिखें"), fontSize = 12.sp, color = Muted)
+                        }
+                        OutlinedTextField(
+                            value = discountValue,
+                            onValueChange = onDiscountValue,
+                            modifier = Modifier
+                                .width(148.dp)
+                                .bringIntoViewRequester(discountBringIntoViewRequester)
+                                .onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        screenScope.launch {
+                                            // The keyboard changes the viewport after focus. Scroll the
+                                            // lazy list itself so the entire amount editor is visible.
+                                            delay(350)
+                                            val discountItemIndex = if (cart.isEmpty()) 4 else 3 + cart.size
+                                            billListState.animateScrollToItem(discountItemIndex)
+                                            delay(100)
+                                            discountBringIntoViewRequester.bringIntoView()
+                                        }
+                                    }
+                                },
+                            label = { Text(tr("Amount (₹)", "राशि (₹)"), maxLines = 1) },
+                            placeholder = { Text("0") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                    Divider(color = Color(0xFFE1E8E7))
+                    Row(Modifier.fillMaxWidth().background(SoftBlue, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr("Final amount", "अंतिम राशि"), Modifier.weight(1f), fontSize = 18.sp, color = Ink, fontWeight = FontWeight.Bold)
+                        Text("₹${total.coerceAtLeast(0)}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Teal)
+                    }
+                    if (!validDiscount) Text(tr("Enter a valid discount below the total amount.", "कुल राशि से कम सही छूट दर्ज करें।"), color = Color(0xFFB42318), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -3531,16 +4240,35 @@ private fun BillScreen(
             Spacer(Modifier.height(4.dp))
             SectionTitle("3", tr("Payment", "भुगतान"))
             Spacer(Modifier.height(8.dp))
+            val isCredit = paymentMode == "Credit"
+            Text(tr("Payment status", "भुगतान की स्थिति"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Cash", "UPI", "Card", "Credit").forEach { option ->
-                    if (paymentMode == option) {
-                        Button(onClick = { onPaymentMode(option) }, modifier = Modifier.weight(1f).height(54.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                            Text(tr(option, if (option == "Credit") "उधार" else option), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else {
-                        OutlinedButton(onClick = { onPaymentMode(option) }, modifier = Modifier.weight(1f).height(54.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                            Text(tr(option, if (option == "Credit") "उधार" else option), fontSize = 14.sp)
-                        }
+                if (!isCredit) {
+                    Button(onClick = {}, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
+                        Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    OutlinedButton(onClick = { onPaymentMode("Cash") }, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
+                        Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 14.sp)
+                    }
+                }
+                if (isCredit) {
+                    Button(onClick = {}, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
+                        Text(tr("Credit", "उधार"), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    OutlinedButton(onClick = { onPaymentMode("Credit") }, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
+                        Text(tr("Credit", "उधार"), fontSize = 14.sp)
+                    }
+                }
+            }
+            if (!isCredit) {
+                Spacer(Modifier.height(8.dp))
+                Text(tr("Paid by", "भुगतान का तरीका"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Cash", "UPI", "Card").forEach { method ->
+                        if (paymentMode == method) Button(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                        else OutlinedButton(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp) }
                     }
                 }
             }
@@ -3549,19 +4277,36 @@ private fun BillScreen(
                 OutlinedTextField(
                     value = creditAmountReceived,
                     onValueChange = onCreditAmountReceived,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(tr("Paid now (₹)", "अभी मिली राशि (₹)")) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewRequester(creditAmountBringIntoViewRequester)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                screenScope.launch {
+                                    // Keep the active payment amount above the keyboard and footer.
+                                    delay(350)
+                                    val paymentItemIndex = if (cart.isEmpty()) 5 else 4 + cart.size
+                                    billListState.animateScrollToItem(paymentItemIndex)
+                                    delay(100)
+                                    creditAmountBringIntoViewRequester.bringIntoView()
+                                }
+                            }
+                        },
+                    label = { Text(tr("Amount received now (₹)", "अभी मिली राशि (₹)")) },
                     placeholder = { Text("0") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
                     shape = RoundedCornerShape(14.dp)
                 )
-                Text(tr("Received by", "राशि मिली via"), color = Muted, fontSize = 14.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Cash", "UPI", "Card").forEach { method ->
-                        if (creditPaymentMethod == method) Button(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(method, fontSize = 14.sp) }
-                        else OutlinedButton(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(method, fontSize = 14.sp) }
+                if (hasCreditPaymentReceived) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(tr("Received via", "राशि मिली via"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Cash", "UPI", "Card").forEach { method ->
+                            if (creditPaymentMethod == method) Button(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                            else OutlinedButton(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp) }
+                        }
                     }
                 }
                 val dueNow = if (paidNow != null) (total - paidNow).coerceAtLeast(0) else total
@@ -3586,45 +4331,94 @@ private fun BillScreen(
                     shape = RoundedCornerShape(14.dp)
                 )
             }
-            Surface(shape = RoundedCornerShape(18.dp), color = SoftGreen) {
+            if (orderMode) Surface(shape = RoundedCornerShape(18.dp), color = SoftGreen) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (orderMode) tr("Estimated total", "अनुमानित कुल") else tr("Bill total", "बिल की कुल राशि"), Modifier.weight(1f), fontSize = 18.sp, color = Ink)
-                    Text("₹$total", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Teal)
+                    Text(tr("Estimated total", "अनुमानित कुल"), Modifier.weight(1f), fontSize = 18.sp, color = Ink)
+                    Text("₹$subtotal", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Teal)
                 }
             }
             if (orderMode) Text(
                 tr("This is an order request only. It will not create a bill or change stock.", "यह केवल ऑर्डर अनुरोध है। इससे बिल नहीं बनेगा और स्टॉक नहीं बदलेगा।"),
                 color = Muted, fontSize = 14.sp, lineHeight = 19.sp
             )
-            Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = onSave,
-                enabled = !saving && customerPhone.isNotBlank() && customerExists != null && (customerExists || customerName.isNotBlank()) && validCart && (orderMode || validCreditAmount),
-                modifier = Modifier.fillMaxWidth().height(62.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
-                else Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null)
-                Spacer(Modifier.width(10.dp)); Text(
-                    when {
-                        saving && orderMode -> tr("Sending order…", "ऑर्डर भेज रहे हैं…")
-                        saving -> tr("Creating bill…", "बिल बना रहे हैं…")
-                        orderMode -> tr("Send order request", "ऑर्डर अनुरोध भेजें")
-                        else -> tr("Create bill and PDF", "बिल और PDF बनाएँ")
-                    },
-                    fontSize = 19.sp, fontWeight = FontWeight.Bold
-                )
-            }
-            Text(
-                if (orderMode) tr("The manager will see this request in Order Requests.", "मैनेजर यह अनुरोध Order Requests में देखेंगे।")
-                else if (connected) tr("This creates the invoice in Shop and saves a PDF in Drive.", "इससे Shop में बिल बनेगा और Drive में PDF सहेजी जाएगी।")
-                else tr("Preview only — connect to Shop and sign in before saving.", "यह केवल पूर्वावलोकन है — सहेजने के लिए Shop से जुड़कर साइन इन करें।"),
+            if (orderMode) Text(
+                tr("The manager will see this request in Order Requests.", "मैनेजर यह अनुरोध Order Requests में देखेंगे।"),
                 Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                 fontSize = 14.sp,
                 lineHeight = 19.sp,
                 color = Muted
             )
         }
+      }
+      Column(
+          Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Paper).padding(horizontal = 14.dp, vertical = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(5.dp)
+      ) {
+          Text(submitHint, Modifier.padding(horizontal = 4.dp), fontSize = 13.sp, color = if (canSubmit) Teal else Muted, maxLines = 1)
+          Button(
+              onClick = onSave,
+              enabled = canSubmit,
+              modifier = Modifier.fillMaxWidth().height(58.dp),
+              shape = RoundedCornerShape(16.dp)
+          ) {
+              if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+              else Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null)
+              Spacer(Modifier.width(10.dp))
+              Text(if (orderMode) tr("Send order request", "ऑर्डर अनुरोध भेजें") else tr("Create bill", "बिल बनाएँ"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
+          }
+      }
+    }
+    if (showNewCustomerDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!savingCustomer) showNewCustomerDialog = false },
+            title = { Text(tr("Add customer", "ग्राहक जोड़ें"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        tr("No saved customer found for $customerPhone. Add their details to continue.", "$customerPhone के लिए ग्राहक नहीं मिला। आगे बढ़ने के लिए जानकारी जोड़ें।"),
+                        color = Muted,
+                        fontSize = 14.sp
+                    )
+                    OutlinedTextField(
+                        value = customerName,
+                        onValueChange = onName,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(tr("Customer name", "ग्राहक का नाम")) },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = customerEmail,
+                        onValueChange = onCustomerEmail,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(tr("Email (optional)", "ईमेल (वैकल्पिक)")) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = customerAddress,
+                        onValueChange = onCustomerAddress,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(tr("City or address (optional)", "शहर या पता (वैकल्पिक)")) },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = onSaveCustomer,
+                    enabled = customerName.isNotBlank() && !savingCustomer
+                ) { Text(if (savingCustomer) tr("Saving…", "सहेज रहे हैं…") else tr("Save customer", "ग्राहक सहेजें")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewCustomerDialog = false }, enabled = !savingCustomer) { Text(tr("Cancel", "रद्द करें")) }
+            }
+        )
     }
     selectedProductDetails?.let { product ->
         val quantityInBill = cart.firstOrNull { it.product.sku == product.sku }?.quantity ?: 0.0
@@ -4084,6 +4878,38 @@ private fun BillsScreen(
                 TextButton(onClick = { selectedBillDetails = null }) { Text(tr("Close", "बंद करें")) }
             }
         )
+    }
+}
+
+@Composable
+private fun BillClothThumbnail(
+    product: Product,
+    imageLoader: suspend (String) -> ByteArray?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var bitmap by remember(product.sku, product.imageId) {
+        mutableStateOf(ProductImageCache.memoryHit(product.sku, product.imageId))
+    }
+    LaunchedEffect(product.sku, product.imageId) {
+        if (product.imageId.isNotBlank()) {
+            bitmap = withContext(Dispatchers.IO) { ProductImageCache.load(context, product.sku, product.imageId) }
+            if (bitmap == null) {
+                val bytes = runCatching { imageLoader(product.imageId) }.getOrNull()
+                if (bytes != null) bitmap = withContext(Dispatchers.IO) {
+                    ProductImageCache.save(context, product.sku, product.imageId, bytes)
+                        ?: BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+            }
+        }
+    }
+    Surface(modifier = modifier, shape = RoundedCornerShape(12.dp), color = SoftBlue) {
+        if (bitmap != null) Image(
+            bitmap!!.asImageBitmap(), contentDescription = product.name,
+            modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop
+        ) else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Inventory2, contentDescription = null, tint = Muted, modifier = Modifier.size(34.dp))
+        }
     }
 }
 
