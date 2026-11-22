@@ -1,5 +1,6 @@
 package com.shop.salesapp
 
+import com.shop.salesapp.ui.model.CartLine
 import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Base64
@@ -14,7 +15,10 @@ data class Product(
     val stock: Double,
     val imageId: String = "",
     val available: Boolean = true,
-    val fractionalQuantity: Boolean = false
+    val fractionalQuantity: Boolean = false,
+    val unit: String = if (fractionalQuantity) "METRE" else "PIECE",
+    /** Optional price basis for piece-counted items whose per-piece weight/length varies. */
+    val pricingUnit: String = ""
 )
 data class ShopSession(val email: String, val role: String)
 data class DeletionRequest(
@@ -31,7 +35,7 @@ data class DeletionRequest(
 )
 
 data class ShopCustomer(val id: String, val name: String, val phone: String, val email: String)
-data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false)
+data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false, val unit: String = if (fractionalQuantity) "METRE" else "PIECE", val pricingUnit: String = "")
 data class CreatedInvoice(
     val invoiceNumber: String, val total: Int, val pdfUrl: String, val paid: Int, val due: Int,
     val paymentMode: String, val subtotal: Int, val discount: Int, val items: List<InvoiceLine>
@@ -46,7 +50,10 @@ data class InvoiceLine(
     val discount: Int,
     val lineTotal: Int,
     val voided: Boolean = false,
-    val fractionalQuantity: Boolean = false
+    val fractionalQuantity: Boolean = false,
+    val unit: String = if (fractionalQuantity) "METRE" else "PIECE",
+    val measureQuantity: Double = 0.0,
+    val pricingUnit: String = ""
 )
 data class ShopInvoice(
     val number: String,
@@ -73,7 +80,8 @@ data class PaymentReceipt(
     val requestId: String = "",
     val customerName: String = "",
     val customerPhone: String = "",
-    val isVoided: Boolean = false
+    val isVoided: Boolean = false,
+    val advanceAmount: Int = 0
 )
 data class BillPaymentResult(val receipt: PaymentReceipt, val invoiceDue: Int)
 data class CustomerPaymentAllocation(val invoiceNumber: String, val amount: Int, val dueAfter: Int)
@@ -83,7 +91,8 @@ data class CustomerFinance(
     val totalPaid: Int,
     val currentDue: Int,
     val invoiceCount: Int,
-    val payments: List<PaymentReceipt>
+    val payments: List<PaymentReceipt>,
+    val advanceBalance: Int = 0
 )
 data class CreatedOrderRequest(val requestNumber: String, val status: String)
 data class OrderRequestItem(val name: String, val sku: String, val quantity: Double)
@@ -115,7 +124,7 @@ class ShopApiClient(baseUrl: String) {
                 amount = row.optDouble("amount").toInt(), method = row.optString("method"),
                 note = row.optString("note"), syncStatus = "SYNCED", requestId = row.optString("requestId"),
                 customerName = row.optString("customerName"), customerPhone = row.optString("customerPhone"),
-                isVoided = row.optBoolean("voided", false)
+                isVoided = row.optBoolean("voided", false), advanceAmount = row.optInt("advanceAmount")
             )
         }
     }
@@ -133,7 +142,9 @@ class ShopApiClient(baseUrl: String) {
                 stock = row.optDouble("stock"),
                 imageId = row.optString("imageId"),
                 available = row.optBoolean("available", true),
-                fractionalQuantity = row.optBoolean("fractionalQuantity", false)
+                fractionalQuantity = row.optBoolean("fractionalQuantity", false),
+                unit = row.optString("unit").ifBlank { if (row.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
+                pricingUnit = row.optString("pricingUnit")
             )
         }
     }
@@ -169,14 +180,16 @@ class ShopApiClient(baseUrl: String) {
         name: String,
         category: String,
         sellingPrice: Int,
-        fractionalQuantity: Boolean
+        fractionalQuantity: Boolean,
+        unit: String
     ) {
         request("updateProduct", idToken, JSONObject()
             .put("sku", sku)
             .put("name", name)
             .put("category", category)
             .put("sellingPrice", sellingPrice)
-            .put("fractionalQuantity", fractionalQuantity))
+            .put("fractionalQuantity", fractionalQuantity)
+            .put("unit", unit))
     }
 
     fun addStockAdjustment(idToken: String, sku: String, quantity: Double, reason: String) {
@@ -218,7 +231,7 @@ class ShopApiClient(baseUrl: String) {
                 id = row.optString("id"), receiptNumber = row.optString("receiptNumber"), date = row.optString("date"),
                 invoiceNumber = row.optString("invoiceNumber"), amount = row.optDouble("amount").toInt(),
                 method = row.optString("method"), note = row.optString("note"), requestId = row.optString("requestId"),
-                isVoided = row.optBoolean("voided", false)
+                isVoided = row.optBoolean("voided", false), advanceAmount = row.optInt("advanceAmount")
             )
         }
         return CustomerFinance(
@@ -226,7 +239,8 @@ class ShopApiClient(baseUrl: String) {
             totalPaid = summary.optDouble("totalPaid").toInt(),
             currentDue = summary.optDouble("currentDue").toInt(),
             invoiceCount = summary.optInt("invoiceCount"),
-            payments = payments
+            payments = payments,
+            advanceBalance = summary.optInt("advanceBalance")
         )
     }
 
@@ -256,7 +270,10 @@ class ShopApiClient(baseUrl: String) {
                     discount = item.optDouble("discount").toInt(),
                     lineTotal = item.optDouble("lineTotal").toInt(),
                     voided = item.optBoolean("voided", false),
-                    fractionalQuantity = item.optBoolean("fractionalQuantity", false)
+                    fractionalQuantity = item.optBoolean("fractionalQuantity", false),
+                    unit = item.optString("unit").ifBlank { if (item.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
+                    measureQuantity = item.optDouble("measureQuantity", 0.0).takeIf { it.isFinite() } ?: 0.0,
+                    pricingUnit = item.optString("pricingUnit")
                 )
             }
             val paymentMode = row.optString("paymentMode")
@@ -295,6 +312,13 @@ class ShopApiClient(baseUrl: String) {
             mimeType = mimeType,
             bytes = Base64.decode(encoded, Base64.DEFAULT)
         )
+    }
+
+    fun generateInvoicePdf(idToken: String, invoiceNumber: String): String {
+        val response = request("generateInvoicePdf", idToken, JSONObject().put("invoiceNumber", invoiceNumber))
+        return response.optString("pdfUrl").also { url ->
+            check(url.isNotBlank()) { "The bill was saved, but its PDF is still being prepared." }
+        }
     }
 
     fun orderRequests(idToken: String, phone: String): List<CustomerOrderRequest> {
@@ -345,7 +369,9 @@ class ShopApiClient(baseUrl: String) {
         unitCost: Double,
         openingStock: Double,
         imageBase64: String = "",
-        fractionalQuantity: Boolean = false
+        fractionalQuantity: Boolean = false,
+        unit: String = if (fractionalQuantity) "METRE" else "PIECE",
+        pricingUnit: String = ""
     ): CreatedProduct {
         val body = JSONObject()
             .put("name", name)
@@ -354,9 +380,11 @@ class ShopApiClient(baseUrl: String) {
             .put("unitCost", unitCost)
             .put("openingStock", openingStock)
             .put("fractionalQuantity", fractionalQuantity)
+            .put("unit", unit)
+            .put("pricingUnit", pricingUnit)
             .put("imageBase64", imageBase64)
         val row = request("createProduct", idToken, body)
-        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock"), row.optString("imageId"), row.optBoolean("fractionalQuantity", fractionalQuantity))
+        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock"), row.optString("imageId"), row.optBoolean("fractionalQuantity", fractionalQuantity), row.optString("unit").ifBlank { unit }, row.optString("pricingUnit", pricingUnit))
     }
 
     fun createInvoice(
@@ -373,7 +401,7 @@ class ShopApiClient(baseUrl: String) {
     ): CreatedInvoice {
         val lineItems = JSONArray()
         items.forEach { line ->
-            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("discount", 0))
+            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.measureQuantity ?: 0.0).put("discount", 0))
         }
         val body = JSONObject()
             .put("customer", JSONObject().put("name", customerName).put("phone", customerPhone).put("email", customerEmail).put("address", customerAddress))
@@ -391,7 +419,10 @@ class ShopApiClient(baseUrl: String) {
                 sku = item.optString("sku"), name = item.optString("name"), category = item.optString("category"),
                 quantity = item.optDouble("quantity"), unitPrice = item.optDouble("unitPrice").toInt(),
                 discount = item.optDouble("discount").toInt(), lineTotal = item.optDouble("lineTotal").toInt(),
-                fractionalQuantity = item.optBoolean("fractionalQuantity")
+                fractionalQuantity = item.optBoolean("fractionalQuantity"),
+                unit = item.optString("unit").ifBlank { if (item.optBoolean("fractionalQuantity")) "METRE" else "PIECE" },
+                measureQuantity = item.optDouble("measureQuantity", 0.0).takeIf { it.isFinite() } ?: 0.0,
+                pricingUnit = item.optString("pricingUnit")
             )
         }
         return CreatedInvoice(
@@ -445,7 +476,8 @@ class ShopApiClient(baseUrl: String) {
             amount = response.optInt("amount", amount),
             method = response.optString("method", method),
             note = response.optString("note", note),
-            requestId = response.optString("requestId", requestId)
+            requestId = response.optString("requestId", requestId),
+            advanceAmount = response.optInt("advanceAmount")
         )
         return CustomerPaymentResult(receipt, allocations)
     }

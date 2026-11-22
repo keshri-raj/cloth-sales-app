@@ -8,13 +8,21 @@ import org.json.JSONObject
 object BillCache {
     private const val PREFS = "sales_app_bill_cache"
     private const val KEY_BILLS = "bills_json"
+    private const val KEY_SCHEMA_VERSION = "bills_schema_version"
     private const val MAX_BILLS = 1000
 
     fun load(context: Context): List<ShopInvoice> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_BILLS, null) ?: return emptyList()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_BILLS, null) ?: return emptyList()
         return runCatching {
             val rows = JSONArray(raw)
+            val schemaChanged = migrateBillCacheSchema(rows)
+            if (schemaChanged || prefs.getInt(KEY_SCHEMA_VERSION, 0) < CURRENT_INVOICE_CACHE_SCHEMA) {
+                prefs.edit()
+                    .putString(KEY_BILLS, rows.toString())
+                    .putInt(KEY_SCHEMA_VERSION, CURRENT_INVOICE_CACHE_SCHEMA)
+                    .apply()
+            }
             (0 until rows.length()).mapNotNull { index ->
                 val row = rows.optJSONObject(index) ?: return@mapNotNull null
                 val number = row.optString("number")
@@ -32,7 +40,10 @@ object BillCache {
                             discount = item.optInt("discount"),
                             lineTotal = item.optInt("lineTotal"),
                             voided = item.optBoolean("voided", false),
-                            fractionalQuantity = item.optBoolean("fractionalQuantity", false)
+                            fractionalQuantity = item.optBoolean("fractionalQuantity", false),
+                            unit = item.optString("unit").ifBlank { if (item.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
+                            measureQuantity = item.optDouble("measureQuantity", 0.0).takeIf { it.isFinite() } ?: 0.0,
+                            pricingUnit = item.optString("pricingUnit")
                         )
                     }
                     ShopInvoice(
@@ -67,6 +78,9 @@ object BillCache {
                     .put("lineTotal", item.lineTotal)
                     .put("voided", item.voided)
                     .put("fractionalQuantity", item.fractionalQuantity)
+                    .put("unit", item.unit)
+                    .put("measureQuantity", item.measureQuantity.takeIf { it.isFinite() } ?: 0.0)
+                    .put("pricingUnit", item.pricingUnit)
             })
             rows.put(
                 JSONObject()
@@ -86,6 +100,7 @@ object BillCache {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_BILLS, rows.toString())
+            .putInt(KEY_SCHEMA_VERSION, CURRENT_INVOICE_CACHE_SCHEMA)
             .apply()
     }
 

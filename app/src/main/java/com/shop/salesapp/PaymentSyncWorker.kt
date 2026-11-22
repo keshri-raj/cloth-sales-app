@@ -1,6 +1,7 @@
 package com.shop.salesapp
 
 import android.content.Context
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -54,6 +55,7 @@ class PaymentSyncWorker(context: Context, params: WorkerParameters) : CoroutineW
             updateCachedBills(result.allocations, synced.method)
             Result.success()
         } catch (error: Exception) {
+            Log.e("PaymentSyncWorker", "Payment upload failed: ${error.message}", error)
             LocalPaymentLog.save(applicationContext, phone, payment.copy(syncStatus = "PENDING"))
             Result.retry()
         }

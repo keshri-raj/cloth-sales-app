@@ -9,13 +9,28 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 object BillPdfShare {
+    fun open(context: Context, bill: ShopInvoice, bytes: ByteArray) {
+        val pdf = writeBillPdf(context, bill, bytes)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", pdf)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(view, "Open bill PDF"))
+    }
+
     fun share(context: Context, bill: ShopInvoice, bytes: ByteArray) {
-        require(bytes.isNotEmpty()) { "The bill PDF is empty. Sync bills and try again." }
+        val pdf = writeBillPdf(context, bill, bytes)
+        shareBillToCustomer(context, pdf, bill)
+    }
+
+    private fun writeBillPdf(context: Context, bill: ShopInvoice, bytes: ByteArray): File {
+        require(bytes.isNotEmpty()) { "The bill PDF is empty." }
         val directory = File(context.cacheDir, "shared-bills")
-        if (!directory.exists() && !directory.mkdirs()) throw IllegalStateException("Could not prepare the bill PDF for sharing.")
+        if (!directory.exists() && !directory.mkdirs()) throw IllegalStateException("Could not prepare the bill PDF.")
         val pdf = File(directory, "${safeFileName(bill.number)}.pdf")
         pdf.writeBytes(bytes)
-        shareBillToCustomer(context, pdf, bill)
+        return pdf
     }
 
     private fun shareBillToCustomer(context: Context, pdf: File, bill: ShopInvoice) {
@@ -102,6 +117,52 @@ object BillPdfShare {
             }
         }
         context.startActivity(Intent.createChooser(send, chooserTitle))
+    }
+
+    fun shareCustomerPdf(
+        context: Context,
+        fileName: String,
+        bytes: ByteArray,
+        customerName: String,
+        phone: String,
+        chooserTitle: String,
+        subject: String,
+        text: String
+    ) {
+        require(bytes.isNotEmpty()) { "The PDF is empty." }
+        val directory = File(context.cacheDir, "shared-customer-documents")
+        if (!directory.exists() && !directory.mkdirs()) throw IllegalStateException("Could not prepare the PDF.")
+        val pdf = File(directory, "${safeFileName(fileName)}.pdf")
+        pdf.writeBytes(bytes)
+        require(pdf.isFile && pdf.length() > 0) { "The PDF could not be created." }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", pdf)
+        val message = buildString {
+            append("Hello ${customerName.ifBlank { "Customer" }},\n")
+            append(text)
+        }
+        (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+            ?.setPrimaryClip(ClipData.newPlainText("$subject message", message))
+        Toast.makeText(context, "Message copied. Paste it in WhatsApp before sending the PDF.", Toast.LENGTH_LONG).show()
+        val phoneDigits = whatsappNumber(phone)
+        if (phoneDigits != null) {
+            for (packageName in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+                val targeted = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                    putExtra(Intent.EXTRA_TEXT, message)
+                    putExtra("jid", "$phoneDigits@s.whatsapp.net")
+                    clipData = ClipData.newUri(context.contentResolver, pdf.name, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    setPackage(packageName)
+                }
+                if (targeted.resolveActivity(context.packageManager) != null) {
+                    context.startActivity(targeted)
+                    return
+                }
+            }
+        }
+        sharePdfFile(context, pdf, chooserTitle, subject, message, listOf("com.whatsapp", "com.whatsapp.w4b"))
     }
 
     private fun safeFileName(value: String): String = value.replace(Regex("[^A-Za-z0-9._-]"), "_")

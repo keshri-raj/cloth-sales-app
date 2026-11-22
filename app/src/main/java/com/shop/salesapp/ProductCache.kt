@@ -27,7 +27,9 @@ object ProductCache {
                     stock = row.optDouble("stock"),
                     imageId = row.optString("imageId"),
                     available = row.optBoolean("available", true),
-                    fractionalQuantity = row.optBoolean("fractionalQuantity", false)
+                    fractionalQuantity = row.optBoolean("fractionalQuantity", false),
+                    unit = row.optString("unit").ifBlank { if (row.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
+                    pricingUnit = row.optString("pricingUnit")
                 )
             }
         }.getOrDefault(emptyList())
@@ -46,6 +48,8 @@ object ProductCache {
                     .put("imageId", product.imageId)
                     .put("available", product.available)
                     .put("fractionalQuantity", product.fractionalQuantity)
+                    .put("unit", product.unit)
+                    .put("pricingUnit", product.pricingUnit)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

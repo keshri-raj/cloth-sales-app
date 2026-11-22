@@ -22,6 +22,9 @@ object CustomerHistoryCache {
         val raw = prefs.getString(key, null) ?: return null
         return runCatching {
             val snapshot = JSONObject(raw)
+            if (snapshot.migrateHistoryCacheSchema()) {
+                prefs.edit().putString(key, snapshot.toString()).apply()
+            }
             val savedAt = snapshot.optLong("savedAt", 0L)
             if (savedAt <= 0L || nowMillis < savedAt || nowMillis - savedAt > maxAgeMillis) {
                 prefs.edit().remove(key).apply()
@@ -45,7 +48,7 @@ object CustomerHistoryCache {
                         due = entry.optInt("due", if (entry.optString("paymentMode") == "Credit") entry.optInt("total") else 0),
                         items = (0 until (entry.optJSONArray("items")?.length() ?: 0)).mapNotNull { itemIndex ->
                             val item = entry.optJSONArray("items")?.optJSONObject(itemIndex) ?: return@mapNotNull null
-                            InvoiceLine(item.optString("sku"), item.optString("name"), item.optString("category"), item.optDouble("quantity"), item.optInt("unitPrice"), item.optInt("discount"), item.optInt("lineTotal"), item.optBoolean("voided", false), item.optBoolean("fractionalQuantity", false))
+                            InvoiceLine(item.optString("sku"), item.optString("name"), item.optString("category"), item.optDouble("quantity"), item.optInt("unitPrice"), item.optInt("discount"), item.optInt("lineTotal"), item.optBoolean("voided", false), item.optBoolean("fractionalQuantity", false), item.optString("unit").ifBlank { if (item.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" }, item.optDouble("measureQuantity", 0.0).takeIf { it.isFinite() } ?: 0.0, item.optString("pricingUnit"))
                         }
                     )
                     "request" -> {
@@ -96,6 +99,9 @@ object CustomerHistoryCache {
                                 .put("quantity", item.quantity).put("unitPrice", item.unitPrice).put("discount", item.discount)
                                 .put("lineTotal", item.lineTotal).put("voided", item.voided)
                                 .put("fractionalQuantity", item.fractionalQuantity)
+                                .put("unit", item.unit)
+                                .put("measureQuantity", item.measureQuantity.takeIf { it.isFinite() } ?: 0.0)
+                                .put("pricingUnit", item.pricingUnit)
                         }))
                         .put("pdfUrl", sale.pdfUrl)
                 )
@@ -118,6 +124,7 @@ object CustomerHistoryCache {
         }.sortedByDescending { it.optString("date") }.take(MAX_ENTRIES)
 
         val snapshot = JSONObject()
+            .put("schemaVersion", CURRENT_INVOICE_CACHE_SCHEMA)
             .put("savedAt", nowMillis)
             .put("entries", JSONArray(entries))
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
