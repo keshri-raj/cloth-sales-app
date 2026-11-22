@@ -13,10 +13,10 @@ const APP = {
   timeZone: 'Asia/Kolkata',
   invoiceFolderName: 'Sales App Invoices',
   sheets: {
-    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity'],
+    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit'],
     Customers: ['Customer ID', 'Customer Name', 'Phone', 'Email', 'City / Address', 'Customer Type', 'Total Orders', 'Total Spent', 'Last Purchase Date'],
     'Sales Invoices': ['Invoice #', 'Date', 'Customer ID', 'Customer Name', 'Items', 'Invoice Total', 'Gross Profit', 'Payment Mode', 'Invoice File', 'Customer Phone', 'Status'],
-    'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit', 'Status'],
+    'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit', 'Status', 'Unit', 'Pricing Unit', 'Measure Quantity'],
     Payments: ['Payment ID', 'Date', 'Customer ID', 'Customer Phone', 'Invoice #', 'Amount', 'Payment Method', 'Received By', 'Notes', 'Receipt #', 'Client Request ID', 'Status'],
     'Stock Adjustments': ['Adjustment ID', 'Date', 'SKU', 'Quantity Added', 'Reason', 'Adjusted By'],
   },
@@ -110,6 +110,9 @@ function dispatchApi_(request) {
         break;
       case 'invoicePdf':
         result = invoicePdf_(config, payload);
+        break;
+      case 'generateInvoicePdf':
+        result = withWriteLock_(function () { return generateInvoicePdf_(config, payload); });
         break;
       case 'customerFinance':
         result = customerFinance_(config, String(payload.phone || ''));
@@ -205,11 +208,16 @@ function requireAdmin_(user) {
 }
 
 function ensureColumn_(config, title, header) {
+  ensureColumns_(config, title, [header]);
+}
+
+function ensureColumns_(config, title, headersToEnsure) {
   const sheet = SpreadsheetApp.openById(config.spreadsheetId).getSheetByName(title);
   if (!sheet) throw apiError_("Required tab '" + title + "' is missing from Shop.", 500);
   const width = Math.max(1, sheet.getLastColumn());
   const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
-  if (headers.indexOf(header) < 0) sheet.getRange(1, width + 1).setValue(header).setFontWeight('bold');
+  const missing = headersToEnsure.filter(function (header) { return headers.indexOf(header) < 0; });
+  if (missing.length) sheet.getRange(1, width + 1, 1, missing.length).setValues([missing]).setFontWeight('bold');
 }
 
 function getDeletionRequestsSheet_(config, create) {
@@ -230,11 +238,33 @@ function getDeletionRequestsSheet_(config, create) {
   return sheet;
 }
 
+function cancellationDate_(value) {
+  if (value instanceof Date) value = Utilities.formatDate(value, APP.timeZone, 'yyyy-MM-dd');
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+  const text = String(value || '').trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
+
+function isCancellationWithinDays_(recordDate, requestDate, maxDays) {
+  const created = cancellationDate_(recordDate);
+  const requested = cancellationDate_(requestDate);
+  if (!created || !requested) return false;
+  const age = Math.floor((requested.getTime() - created.getTime()) / 86400000);
+  return age >= 0 && age <= maxDays;
+}
+
 function requestDeletion_(config, payload, userEmail) {
   const type = String(payload.type || '').trim().toUpperCase();
   const recordId = String(payload.recordId || '').trim();
   const reason = String(payload.reason || '').trim();
-  if (!['PAYMENT', 'BILL', 'PRODUCT'].includes(type)) throw apiError_('Choose a payment, bill, or product entry.', 400);
+  if (!['PAYMENT', 'BILL', 'PRODUCT', 'ORDER'].includes(type)) throw apiError_('Choose a payment, bill, product, or order request.', 400);
   if (!recordId || recordId.length > 120) throw apiError_('Choose the entry you want corrected.', 400);
   if (reason.length < 4 || reason.length > 500) throw apiError_('Enter a short reason for this request.', 400);
 
@@ -252,8 +282,21 @@ function requestDeletion_(config, payload, userEmail) {
     ensureColumn_(config, 'Sales Invoices', 'Status');
     const row = getTable_(config, 'Sales Invoices').rows.find(function (item) { return String(item['Invoice #'] || '').trim() === recordId; });
     if (!row || String(row.Status || '').toUpperCase() === 'VOIDED') throw apiError_('That bill is no longer active in Shop.', 404);
+    if (!isCancellationWithinDays_(row.Date, new Date(), 7)) throw apiError_('Bills can only be cancelled within 7 days of their date.', 409);
     summary = String(row['Customer Name'] || row['Customer Phone'] || '') + ' · ₹' + String(row['Invoice Total'] || '');
     snapshot = { invoice: recordId, customer: row['Customer Phone'], total: row['Invoice Total'], status: row.Status || 'ACTIVE' };
+  } else if (type === 'ORDER') {
+    const sheet = SpreadsheetApp.openById(config.spreadsheetId).getSheetByName('Order Requests');
+    if (!sheet || sheet.getLastRow() < 2) throw apiError_('That order request was not found.', 404);
+    const values = sheet.getDataRange().getValues();
+    const columns = headerIndexes_(values[0]);
+    const matchingRows = values.slice(1).filter(function (row) { return String(row[columns['Request #']] || '').trim() === recordId; });
+    if (!matchingRows.length) throw apiError_('That order request was not found.', 404);
+    if (matchingRows.some(function (row) { return String(row[columns.Status] || '').toUpperCase() !== 'PENDING'; })) {
+      throw apiError_('Only pending order requests can be cancelled.', 409);
+    }
+    summary = String(matchingRows[0][columns['Customer Name']] || matchingRows[0][columns['Customer Phone']] || '') + ' · ' + recordId;
+    snapshot = { requestNumber: recordId, customerPhone: matchingRows[0][columns['Customer Phone']], status: 'PENDING' };
   } else {
     ensureColumn_(config, 'Inventory', 'Availability');
     const row = getTable_(config, 'Inventory').rows.find(function (item) { return String(item.SKU || '').trim() === recordId; });
@@ -355,6 +398,7 @@ function applyDeletionRequest_(config, requestRow, columns) {
     const invoices = getTable_(config, 'Sales Invoices');
     const invoice = invoices.rows.find(function (row) { return String(row['Invoice #'] || '').trim() === recordId; });
     if (!invoice) throw apiError_('That bill was not found.', 404);
+    if (!isCancellationWithinDays_(invoice.Date, requestRow[columns['Created At']], 7)) throw apiError_('This bill cancellation request was not made within 7 days.', 409);
     if (String(invoice.Status || '').toUpperCase() !== 'VOIDED') setTableCell_(invoices, invoice._rowNumber, 'Status', 'VOIDED');
     const items = getTable_(config, 'Sales Items');
     items.rows.filter(function (row) { return String(row['Invoice #'] || '').trim() === recordId && String(row.Status || '').toUpperCase() !== 'VOIDED'; }).forEach(function (row) {
@@ -365,6 +409,20 @@ function applyDeletionRequest_(config, requestRow, columns) {
       setTableCell_(payments, row._rowNumber, 'Status', 'VOIDED');
     });
     writeRecords_(config, [], ['Sales Invoices', 'Sales Items', 'Inventory', 'Customers']);
+  } else if (type === 'ORDER') {
+    const sheet = SpreadsheetApp.openById(config.spreadsheetId).getSheetByName('Order Requests');
+    if (!sheet || sheet.getLastRow() < 2) throw apiError_('That order request was not found.', 404);
+    const values = sheet.getDataRange().getValues();
+    const columns = headerIndexes_(values[0]);
+    const matchingRows = [];
+    values.slice(1).forEach(function (row, index) {
+      if (String(row[columns['Request #']] || '').trim() === recordId) matchingRows.push({ row: row, rowNumber: index + 2 });
+    });
+    if (!matchingRows.length) throw apiError_('That order request was not found.', 404);
+    if (matchingRows.some(function (item) { return String(item.row[columns.Status] || '').toUpperCase() !== 'PENDING'; })) {
+      throw apiError_('Only pending order requests can be cancelled.', 409);
+    }
+    matchingRows.forEach(function (item) { sheet.getRange(item.rowNumber, columns.Status + 1).setValue('CANCELLED'); });
   } else if (type === 'PRODUCT') {
     setProductAvailability_(config, { sku: recordId, available: false });
   } else {
@@ -389,11 +447,13 @@ function updateProduct_(config, payload) {
   const name = String(payload.name || '').trim();
   const category = String(payload.category || 'Other').trim() || 'Other';
   const sellingPrice = Number(payload.sellingPrice);
-  const fractionalQuantity = payload.fractionalQuantity === true;
+  const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
+  const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
   if (!sku || !name || name.length > 120 || category.length > 100 || !Number.isInteger(sellingPrice) || sellingPrice < 0) {
     throw apiError_('Enter a cloth name, category, and valid whole-rupee price.', 400);
   }
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
   const table = getTable_(config, 'Inventory');
   const row = table.rows.find(function (item) { return String(item.SKU || '').trim() === sku; });
   if (!row) throw apiError_('That cloth was not found in Shop.', 404);
@@ -405,7 +465,8 @@ function updateProduct_(config, payload) {
   setTableCell_(table, row._rowNumber, 'Category', category);
   setTableCell_(table, row._rowNumber, 'Selling Price', sellingPrice);
   setTableCell_(table, row._rowNumber, 'Fractional Quantity', fractionalQuantity);
-  return { sku: sku, name: name, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity };
+  setTableCell_(table, row._rowNumber, 'Unit', unit);
+  return { sku: sku, name: name, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity, unit: unit };
 }
 
 function ensureStockAdjustmentsSheet_(config) {
@@ -475,10 +536,24 @@ function fractionalQuantityEnabled_(value) {
   return value === true || ['true', 'yes', 'y', '1'].indexOf(String(value || '').trim().toLowerCase()) >= 0;
 }
 
+function normalizedProductUnit_(value, fractionalQuantity) {
+  const unit = String(value || '').trim().toUpperCase();
+  if (['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS'].indexOf(unit) >= 0) return 'KG';
+  if (['M', 'METRE', 'METRES', 'METER', 'METERS'].indexOf(unit) >= 0) return 'METRE';
+  if (['PIECE', 'PIECES', 'PCS', 'PC', 'UNIT'].indexOf(unit) >= 0) return 'PIECE';
+  return fractionalQuantityEnabled_(fractionalQuantity) ? 'METRE' : 'PIECE';
+}
+
+function productUnit_(row) {
+  return normalizedProductUnit_(row && row.Unit, row && row['Fractional Quantity']);
+}
+
 function listProducts_(config, query) {
   ensureProductImageColumn_(config);
   ensureColumn_(config, 'Inventory', 'Availability');
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
   const normalizedQuery = query.trim().toLowerCase();
   const table = getTable_(config, 'Inventory');
   const products = table.rows.filter(function (row) {
@@ -491,6 +566,8 @@ function listProducts_(config, query) {
       price: Number(row['Selling Price'] || 0),
       stock: Number(row['Current Stock'] || 0),
       fractionalQuantity: fractionalQuantityEnabled_(row['Fractional Quantity']),
+      unit: productUnit_(row),
+      pricingUnit: normalizedPricingUnit_(row['Pricing Unit']),
       status: String(row['Stock Status'] || ''),
       imageId: String(row['Image ID'] || ''),
       available: String(row.Availability || 'Available').trim().toLowerCase() !== 'unavailable' && String(row.Availability || 'Available').trim().toLowerCase() !== 'false',
@@ -545,6 +622,7 @@ function listOrderRequests_(config, phone) {
     const group = grouped[number];
     return {
       number: group.number, date: group.date,
+      customerName: group.customerName, customerPhone: group.customerPhone,
       productName: group.items.map(function (item) { return item.name + ' ×' + item.quantity; }).join(', '),
       items: group.items, quantity: group.quantity, status: group.status, notes: group.notes, lastRow: group.lastRow,
     };
@@ -634,7 +712,7 @@ function createOrderRequest_(config, payload, userEmail) {
   const customerName = String(payload.customerName || '').trim();
   const phoneDigits = normalizedPhone_(customerPhone);
   if (phoneDigits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
-  if (!Array.isArray(items) || items.length < 1 || items.length > 100) throw apiError_('Add between 1 and 100 clothes before sending the order.', 400);
+  if (!Array.isArray(items) || items.length < 1) throw apiError_('Add at least one cloth before sending the order.', 400);
   const inventory = getTable_(config, 'Inventory');
   const resolvedItems = items.map(function (item) {
     const productName = String(item && item.productName || '').trim();
@@ -644,7 +722,7 @@ function createOrderRequest_(config, payload, userEmail) {
     const product = inventory.rows.find(function (row) { return String(row.SKU || '') === sku; });
     if (!product || String(product.Availability || 'Available').toLowerCase() === 'unavailable' || String(product.Availability || '').toLowerCase() === 'false') throw apiError_('That cloth is unavailable. Sync the catalog and choose another cloth.', 409);
     const fractionalAllowed = fractionalQuantityEnabled_(product['Fractional Quantity']);
-    if (!Number.isFinite(quantity) || quantity < 0.001 || quantity > 10000 || (!fractionalAllowed && !Number.isInteger(quantity)) || (fractionalAllowed && Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 0.000001)) {
+    if (!Number.isFinite(quantity) || quantity < 0.001 || (!fractionalAllowed && !Number.isInteger(quantity)) || (fractionalAllowed && Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 0.000001)) {
       throw apiError_((fractionalAllowed ? 'Enter a positive quantity with up to three decimal places for ' : 'Enter a whole-number quantity greater than zero for ') + productName + '.', 400);
     }
     return { productName: productName, sku: sku, quantity: quantity };
@@ -662,7 +740,10 @@ function createOrderRequest_(config, payload, userEmail) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
-  if (sheet.getLastRow() + resolvedItems.length > APP.maxRows) throw apiError_('The Order Requests tab is full. Ask the manager to make space.', 409);
+  const requiredLastRow = sheet.getLastRow() + resolvedItems.length;
+  if (requiredLastRow > sheet.getMaxRows()) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), requiredLastRow - sheet.getMaxRows());
+  }
 
   const customers = getTable_(config, 'Customers');
   let customer = customers.rows.find(function (row) { return normalizedPhone_(row.Phone) === phoneDigits; });
@@ -690,6 +771,11 @@ function listBills_(config, phone) {
   if (phone.trim() && digits.length < 8) throw apiError_('Enter a valid phone number to search bills.', 400);
   const invoices = getTable_(config, 'Sales Invoices');
   const customers = getTable_(config, 'Customers');
+  ensureColumn_(config, 'Sales Items', 'Unit');
+  ensureColumn_(config, 'Sales Items', 'Pricing Unit');
+  ensureColumn_(config, 'Sales Items', 'Measure Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
   const salesItems = getTable_(config, 'Sales Items');
   const payments = readPaymentsTable_(config);
   const inventory = getTable_(config, 'Inventory');
@@ -713,6 +799,9 @@ function listBills_(config, phone) {
         category: String(row.Category || ''),
         quantity: quantity,
         fractionalQuantity: fractionalQuantityEnabled_((inventoryBySku[sku] || {})['Fractional Quantity']),
+        unit: normalizedProductUnit_(row.Unit, (inventoryBySku[sku] || {})['Fractional Quantity']),
+        measureQuantity: Number(row['Measure Quantity'] || 0),
+        pricingUnit: normalizedPricingUnit_(row['Pricing Unit']),
         unitPrice: Number(row['Unit Price'] || 0),
         discount: Number(row.Discount || 0),
         lineTotal: Number(row['Line Total'] || 0),
@@ -766,9 +855,14 @@ function invoicePdf_(config, payload) {
   });
   if (!invoiceRow) throw apiError_('This bill was not found in Shop. Sync bills and try again.', 404);
   if (String(invoiceRow.Status || '').toUpperCase() === 'VOIDED') throw apiError_('This bill has been cancelled by the administrator.', 409);
-  const fileUrl = String(invoiceRow['Invoice File'] || '').trim();
-  const match = fileUrl.match(/\/file\/d\/([A-Za-z0-9_-]+)/) || fileUrl.match(/[?&]id=([A-Za-z0-9_-]+)/);
-  if (!match) throw apiError_('The PDF link for this bill is missing. Ask the manager to check the invoice.', 404);
+  let fileUrl = String(invoiceRow['Invoice File'] || '').trim();
+  let match = fileUrl.match(/\/file\/d\/([A-Za-z0-9_-]+)/) || fileUrl.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (!match) {
+    const generated = generateInvoicePdf_(config, { invoiceNumber: invoiceNumber });
+    fileUrl = generated.pdfUrl;
+    match = fileUrl.match(/\/file\/d\/([A-Za-z0-9_-]+)/) || fileUrl.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  }
+  if (!match) throw apiError_('The bill PDF is still being prepared. Try again shortly.', 503);
   const fileId = match[1];
   const metadata = Drive.Files.get(fileId, { fields: 'id,mimeType,parents,name' });
   if (metadata.mimeType !== 'application/pdf' || !Array.isArray(metadata.parents) || metadata.parents.indexOf(config.invoiceFolderId) < 0) {
@@ -783,6 +877,11 @@ function invoicePdf_(config, payload) {
   const date = typeof dateValue === 'number'
     ? Utilities.formatDate(new Date(Date.UTC(1899, 11, 30) + dateValue * 86400000), APP.timeZone, 'yyyy-MM-dd')
     : String(dateValue || '');
+  ensureColumn_(config, 'Sales Items', 'Unit');
+  ensureColumn_(config, 'Sales Items', 'Pricing Unit');
+  ensureColumn_(config, 'Sales Items', 'Measure Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
   const itemRows = getTable_(config, 'Sales Items').rows.filter(function (row) {
     return String(row['Invoice #'] || '').trim() === invoiceNumber;
   });
@@ -793,8 +892,9 @@ function invoicePdf_(config, payload) {
     const product = getTable_(config, 'Inventory').rows.find(function (candidate) { return String(candidate.SKU || '') === String(row.SKU || ''); }) || {};
     return {
       sku: String(row.SKU || ''), name: String(row['Product Name'] || ''), category: String(row.Category || ''),
-      quantity: quantity, fractionalQuantity: fractionalQuantityEnabled_(product['Fractional Quantity']), unitPrice: unitPrice, unitCost: 0, discount: discount,
-      lineTotal: Number(row['Line Total'] || Math.max(0, quantity * unitPrice - discount)),
+      quantity: quantity, fractionalQuantity: fractionalQuantityEnabled_(product['Fractional Quantity']), unit: normalizedProductUnit_(row.Unit, product['Fractional Quantity']), unitPrice: unitPrice, unitCost: 0, discount: discount,
+      measureQuantity: Number(row['Measure Quantity'] || 0), pricingUnit: normalizedPricingUnit_(row['Pricing Unit']),
+      lineTotal: Number(row['Line Total'] || Math.max(0, (normalizedPricingUnit_(row['Pricing Unit']) ? Number(row['Measure Quantity'] || 0) : quantity) * unitPrice - discount)),
     };
   });
   if (!lines.length || lines.some(function (line) { return !line.name || line.quantity < 0.001 || line.unitPrice <= 0; })) {
@@ -802,7 +902,7 @@ function invoicePdf_(config, payload) {
   }
   const invoice = {
     number: invoiceNumber, date: date,
-    subtotal: lines.reduce(function (sum, line) { return sum + Math.round(line.quantity * line.unitPrice); }, 0),
+    subtotal: lines.reduce(function (sum, line) { return sum + Math.round((line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitPrice); }, 0),
     discount: lines.reduce(function (sum, line) { return sum + line.discount; }, 0),
     total: total,
     paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
@@ -819,6 +919,84 @@ function invoicePdf_(config, payload) {
   };
 }
 
+function generateInvoicePdf_(config, payload) {
+  const invoiceNumber = String(payload.invoiceNumber || '').trim();
+  if (!invoiceNumber) throw apiError_('Choose a bill before generating its PDF.', 400);
+  const invoices = getTable_(config, 'Sales Invoices');
+  const invoiceRow = invoices.rows.find(function (row) { return String(row['Invoice #'] || '').trim() === invoiceNumber; });
+  if (!invoiceRow) throw apiError_('This bill was not found in Shop. Sync bills and try again.', 404);
+  if (String(invoiceRow.Status || '').toUpperCase() === 'VOIDED') throw apiError_('This bill has been cancelled by the administrator.', 409);
+  const existingUrl = String(invoiceRow['Invoice File'] || '').trim();
+  if (/\/file\/d\/[A-Za-z0-9_-]+/.test(existingUrl) || /[?&]id=[A-Za-z0-9_-]+/.test(existingUrl)) {
+    return { pdfUrl: existingUrl, ready: true };
+  }
+
+  const total = Number(invoiceRow['Invoice Total'] || 0);
+  const payments = readPaymentsTable_(config);
+  const paidByInvoice = paymentsByInvoice_(payments);
+  const paid = Math.min(total, paidAmountForInvoice_(payments, paidByInvoice, invoiceNumber, invoiceRow, total));
+  const dateValue = invoiceRow.Date;
+  const date = typeof dateValue === 'number'
+    ? Utilities.formatDate(new Date(Date.UTC(1899, 11, 30) + dateValue * 86400000), APP.timeZone, 'yyyy-MM-dd')
+    : String(dateValue || '');
+  ensureColumn_(config, 'Sales Items', 'Unit');
+  ensureColumn_(config, 'Sales Items', 'Pricing Unit');
+  ensureColumn_(config, 'Sales Items', 'Measure Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
+  const inventoryRows = getTable_(config, 'Inventory').rows;
+  const itemRows = getTable_(config, 'Sales Items').rows.filter(function (row) {
+    return String(row['Invoice #'] || '').trim() === invoiceNumber;
+  });
+  const lines = itemRows.map(function (row) {
+    const quantity = Number(row.Quantity || 0);
+    const unitPrice = Number(row['Unit Price'] || 0);
+    const discount = Number(row.Discount || 0);
+    const product = inventoryRows.find(function (candidate) { return String(candidate.SKU || '') === String(row.SKU || ''); }) || {};
+    return {
+      sku: String(row.SKU || ''), name: String(row['Product Name'] || product['Product Name'] || ''),
+      category: String(row.Category || product.Category || ''), quantity: quantity,
+      fractionalQuantity: fractionalQuantityEnabled_(product['Fractional Quantity']),
+      unit: normalizedProductUnit_(row.Unit, product['Fractional Quantity']), unitPrice: unitPrice,
+      unitCost: 0, discount: discount, measureQuantity: Number(row['Measure Quantity'] || 0),
+      pricingUnit: normalizedPricingUnit_(row['Pricing Unit'] || product['Pricing Unit']),
+      lineTotal: Number(row['Line Total'] || Math.max(0, (normalizedPricingUnit_(row['Pricing Unit'] || product['Pricing Unit']) ? Number(row['Measure Quantity'] || 0) : quantity) * unitPrice - discount)),
+    };
+  });
+  if (total <= 0 || !lines.length || lines.some(function (line) { return !line.name || line.quantity < 0.001 || line.unitPrice <= 0 || line.lineTotal <= 0; })) {
+    throw apiError_('The bill is saved, but its PDF details are incomplete. Ask the manager to check the bill.', 409);
+  }
+  const invoice = {
+    number: invoiceNumber, date: date,
+    subtotal: lines.reduce(function (sum, line) { return sum + Math.round((line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitPrice); }, 0),
+    discount: lines.reduce(function (sum, line) { return sum + line.discount; }, 0),
+    total: total, paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
+  };
+  const customer = { name: String(invoiceRow['Customer Name'] || ''), phone: String(invoiceRow['Customer Phone'] || '') };
+  const pdf = buildInvoicePdf_(invoice, customer, lines);
+  let fileId = '';
+  try {
+    const file = Drive.Files.create({
+      name: invoiceNumber + '.pdf', mimeType: 'application/pdf', parents: [config.invoiceFolderId],
+    }, pdf, { fields: 'id,webViewLink' });
+    fileId = file.id;
+    shareInvoice_(file.id, config.authorizedEmails);
+    const invoiceFileColumn = invoices.headers.indexOf('Invoice File');
+    if (invoiceFileColumn < 0) throw apiError_('The Sales Invoices tab is missing its Invoice File column.', 500);
+    const pdfUrl = file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view';
+    Sheets.Spreadsheets.batchUpdate({ requests: [{
+      updateCells: {
+        range: { sheetId: invoices.sheetId, startRowIndex: invoiceRow._rowNumber - 1, endRowIndex: invoiceRow._rowNumber, startColumnIndex: invoiceFileColumn, endColumnIndex: invoiceFileColumn + 1 },
+        rows: [{ values: [{ userEnteredValue: { stringValue: pdfUrl } }] }], fields: 'userEnteredValue',
+      },
+    }] }, config.spreadsheetId);
+    return { pdfUrl: pdfUrl, ready: true };
+  } catch (error) {
+    if (fileId) { try { Drive.Files.delete(fileId); } catch (cleanupError) { console.error(cleanupError); } }
+    throw error;
+  }
+}
+
 function customerFinance_(config, phone) {
   const digits = normalizedPhone_(phone);
   if (digits.length < 8) throw apiError_('Enter a valid customer phone number.', 400);
@@ -828,6 +1006,10 @@ function customerFinance_(config, phone) {
   });
   const payments = readPaymentsTable_(config);
   const paidByInvoice = paymentsByInvoice_(payments);
+  const advanceBalance = (payments ? payments.rows : []).reduce(function (sum, row) {
+    return !isVoidedPayment_(row) && normalizedPhone_(row['Customer Phone']) === digits &&
+      !String(row['Invoice #'] || '').trim() && Number(row.Amount) > 0 ? sum + Number(row.Amount) : sum;
+  }, 0);
   let totalPurchases = 0;
   let totalPaid = 0;
   invoices.forEach(function (row) {
@@ -845,7 +1027,7 @@ function customerFinance_(config, phone) {
       const receiptNumber = String(row['Receipt #'] || row['Payment ID'] || '');
       if (!receiptGroups[receiptNumber]) receiptGroups[receiptNumber] = {
         id: receiptNumber, receiptNumber: receiptNumber, date: String(row.Date || ''),
-        invoiceNumbers: [], amount: 0, method: String(row['Payment Method'] || ''),
+        invoiceNumbers: [], amount: 0, advanceAmount: 0, method: String(row['Payment Method'] || ''),
         note: String(row.Notes || ''), requestId: String(row['Client Request ID'] || ''),
         voided: false, lastRow: row._rowNumber,
       };
@@ -853,6 +1035,7 @@ function customerFinance_(config, phone) {
       receipt.voided = receipt.voided || isVoidedPayment_(row);
       const invoiceNumber = String(row['Invoice #'] || '');
       if (invoiceNumber && receipt.invoiceNumbers.indexOf(invoiceNumber) < 0) receipt.invoiceNumbers.push(invoiceNumber);
+      if (!invoiceNumber && !isVoidedPayment_(row)) receipt.advanceAmount += Number(row.Amount || 0);
       receipt.amount += Number(row.Amount || 0);
       receipt.lastRow = Math.max(receipt.lastRow, row._rowNumber);
     });
@@ -863,6 +1046,7 @@ function customerFinance_(config, phone) {
       return {
         id: receipt.id, receiptNumber: receipt.receiptNumber, date: receipt.date,
         invoiceNumber: receipt.invoiceNumbers.join(', '), amount: receipt.amount,
+        advanceAmount: receipt.advanceAmount,
         method: receipt.method, note: receipt.note, requestId: receipt.requestId, voided: receipt.voided,
       };
     });
@@ -871,6 +1055,7 @@ function customerFinance_(config, phone) {
       totalPurchases: totalPurchases,
       totalPaid: totalPaid,
       currentDue: Math.max(0, totalPurchases - totalPaid),
+      advanceBalance: advanceBalance,
       invoiceCount: invoices.length,
       customerId: customerId,
     },
@@ -891,7 +1076,7 @@ function listPayments_(config) {
     if (!groups[receiptNumber]) groups[receiptNumber] = {
       id: receiptNumber, receiptNumber: receiptNumber, date: String(row.Date || ''),
       customerName: customersByPhone[normalizedPhone_(row['Customer Phone'])] || '',
-      customerPhone: String(row['Customer Phone'] || ''), invoiceNumbers: [], amount: 0,
+      customerPhone: String(row['Customer Phone'] || ''), invoiceNumbers: [], amount: 0, advanceAmount: 0,
       method: String(row['Payment Method'] || ''), note: String(row.Notes || ''),
       requestId: String(row['Client Request ID'] || ''), voided: isVoidedPayment_(row), lastRow: row._rowNumber,
     };
@@ -899,6 +1084,7 @@ function listPayments_(config) {
     group.voided = group.voided || isVoidedPayment_(row);
     const invoiceNumber = String(row['Invoice #'] || '').trim();
     if (invoiceNumber && group.invoiceNumbers.indexOf(invoiceNumber) < 0) group.invoiceNumbers.push(invoiceNumber);
+    if (!invoiceNumber && !isVoidedPayment_(row)) group.advanceAmount += Number(row.Amount || 0);
     group.amount += Number(row.Amount || 0);
     group.lastRow = Math.max(group.lastRow, row._rowNumber);
   });
@@ -910,6 +1096,7 @@ function listPayments_(config) {
         id: group.id, receiptNumber: group.receiptNumber, date: group.date,
         customerName: group.customerName, customerPhone: group.customerPhone,
         invoiceNumber: group.invoiceNumbers.join(', '), amount: group.amount,
+        advanceAmount: group.advanceAmount,
         method: group.method, note: group.note, requestId: group.requestId, voided: group.voided,
       };
     });
@@ -981,6 +1168,11 @@ function receivePayment_(config, payload, userEmail) {
 }
 
 function ensurePaymentsTable_(config) {
+  ensurePaymentsSheet_(config);
+  return getTable_(config, 'Payments');
+}
+
+function ensurePaymentsSheet_(config) {
   const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
   let sheet = spreadsheet.getSheetByName('Payments');
   if (!sheet) sheet = spreadsheet.insertSheet('Payments');
@@ -998,7 +1190,7 @@ function ensurePaymentsTable_(config) {
       }
     });
   }
-  return getTable_(config, 'Payments');
+  return sheet;
 }
 
 function readPaymentsTable_(config) {
@@ -1018,6 +1210,8 @@ function receiveCustomerPayment_(config, payload, userEmail) {
 
   const invoices = getTable_(config, 'Sales Invoices');
   const payments = ensurePaymentsTable_(config);
+  const customer = getTable_(config, 'Customers').rows.find(function (row) { return normalizedPhone_(row.Phone) === digits; });
+  if (!customer) throw apiError_('Customer not found. Add the customer before recording a payment.', 404);
   const paidByInvoice = paymentsByInvoice_(payments);
   const previousRows = payments.rows.filter(function (row) { return String(row['Client Request ID'] || '') === requestId; });
   if (previousRows.length) {
@@ -1040,6 +1234,8 @@ function receiveCustomerPayment_(config, payload, userEmail) {
       date: previousRows[0].Date, amount: previousRows.reduce(function (sum, row) { return sum + Number(row.Amount || 0); }, 0),
       method: previousRows[0]['Payment Method'], note: previousRows[0].Notes,
       allocations: allocations,
+      advanceAmount: previousRows.filter(function (row) { return !String(row['Invoice #'] || '').trim() && !isVoidedPayment_(row); })
+        .reduce(function (sum, row) { return sum + Number(row.Amount || 0); }, 0),
     };
   }
   const candidates = invoices.rows
@@ -1055,8 +1251,6 @@ function receiveCustomerPayment_(config, payload, userEmail) {
     .filter(function (candidate) { return candidate && candidate.due > 0; })
     .sort(function (a, b) { return a.row._rowNumber - b.row._rowNumber; });
   const totalDue = candidates.reduce(function (sum, candidate) { return sum + candidate.due; }, 0);
-  if (totalDue <= 0) throw apiError_('This customer has no unpaid bills.', 409);
-  if (amount > totalDue) throw apiError_('Payment is greater than the customer due of ₹' + totalDue + '.', 400);
 
   const receiptNumber = newId_('RCPT');
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd HH:mm:ss');
@@ -1068,7 +1262,9 @@ function receiveCustomerPayment_(config, payload, userEmail) {
     allocations.push({ candidate: candidate, amount: allocated });
     remaining -= allocated;
   });
-  const rows = nextFreeRows_(payments, allocations.length);
+  const advanceAmount = remaining;
+  const rowCount = allocations.length + (advanceAmount > 0 ? 1 : 0);
+  const rows = nextFreeRows_(payments, rowCount);
   const note = String(payload.note || '').trim();
   const plans = allocations.map(function (allocation, index) {
     return {
@@ -1082,8 +1278,20 @@ function receiveCustomerPayment_(config, payload, userEmail) {
       },
     };
   });
+  if (advanceAmount > 0) {
+    plans.push({
+      title: 'Payments', table: payments, rowNumber: rows[allocations.length],
+      record: {
+        'Payment ID': newId_('PAY'), Date: date,
+        'Customer ID': String(customer['Customer ID'] || ''), 'Customer Phone': phone,
+        'Invoice #': '', Amount: advanceAmount, 'Payment Method': method,
+        'Received By': userEmail, Notes: note || 'Customer advance credit', 'Receipt #': receiptNumber,
+        'Client Request ID': requestId, Status: 'ACTIVE',
+      },
+    });
+  }
   writeRecords_(config, plans, ['Payments']);
-  return { receiptNumber: receiptNumber, requestId: requestId, date: date, amount: amount, method: method, note: note, allocations: allocations.map(function (allocation) {
+  return { receiptNumber: receiptNumber, requestId: requestId, date: date, amount: amount, method: method, note: note, advanceAmount: advanceAmount, allocations: allocations.map(function (allocation) {
     return { invoiceNumber: allocation.candidate.number, amount: allocation.amount, dueAfter: allocation.candidate.due - allocation.amount };
   }) };
 }
@@ -1117,12 +1325,16 @@ function createProduct_(config, payload) {
   ensureProductImageColumn_(config);
   ensureColumn_(config, 'Inventory', 'Availability');
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
+  ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
   const name = String(payload.name || '').trim();
   const category = String(payload.category || 'Other').trim() || 'Other';
   const sellingPrice = Number(payload.sellingPrice);
   const unitCost = Number(payload.unitCost || 0);
   const stock = Number(payload.openingStock);
-  const fractionalQuantity = payload.fractionalQuantity === true;
+  const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
+  const pricingUnit = unit === 'PIECE' ? normalizedPricingUnit_(payload.pricingUnit) : '';
+  const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
   if (!name || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isFinite(stock) || stock < 0 || stock > 100000 || (!fractionalQuantity && !Number.isInteger(stock)) || (fractionalQuantity && Math.abs(stock * 1000 - Math.round(stock * 1000)) > 0.000001)) {
     throw apiError_('Enter a product name, valid prices, and a valid opening quantity.', 400);
   }
@@ -1143,12 +1355,19 @@ function createProduct_(config, payload) {
       'Selling Price': sellingPrice,
       'Opening Stock': stock,
       'Fractional Quantity': fractionalQuantity,
+      Unit: unit,
+      'Pricing Unit': pricingUnit,
       'Reorder Level': Number(payload.reorderLevel || 0),
       'Image ID': imageId,
       Availability: 'Available',
     },
   }], ['Inventory']);
-  return { sku: sku, name: name, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, qrValue: sku };
+  return { sku: sku, name: name, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
+}
+
+function normalizedPricingUnit_(value) {
+  const unit = String(value || '').trim().toUpperCase();
+  return unit === 'KG' ? 'KG' : (unit === 'METRE' || unit === 'M' ? 'METRE' : '');
 }
 
 function createInvoice_(config, payload, userEmail) {
@@ -1164,10 +1383,13 @@ function createInvoice_(config, payload, userEmail) {
     throw apiError_('One or more bill items are missing a cloth code. Remove the incomplete item and add it again.', 400);
   }
 
-  const inventory = getTable_(config, 'Inventory');
-  const customers = getTable_(config, 'Customers');
-  const invoices = getTable_(config, 'Sales Invoices');
-  const salesItems = getTable_(config, 'Sales Items');
+  ensurePaymentsSheet_(config);
+  const tables = getTables_(config, ['Inventory', 'Customers', 'Sales Invoices', 'Sales Items', 'Payments']);
+  const inventory = tables.Inventory;
+  const customers = tables.Customers;
+  const invoices = tables['Sales Invoices'];
+  const salesItems = tables['Sales Items'];
+  const paymentTable = tables.Payments;
   let customer = customers.rows.find(function (row) { return normalizedPhone_(row.Phone) === normalizedPhone_(phone); });
   const plans = [];
   if (!customer) {
@@ -1194,6 +1416,8 @@ function createInvoice_(config, payload, userEmail) {
     if (!String(product['Product Name'] || '').trim()) throw apiError_('A selected cloth is missing its name in Inventory. Ask the manager to correct it before billing.', 400);
     const quantity = Number(item.quantity);
     const fractionalAllowed = fractionalQuantityEnabled_(product['Fractional Quantity']);
+    const unit = productUnit_(product);
+    const pricingUnit = unit === 'PIECE' ? normalizedPricingUnit_(product['Pricing Unit']) : '';
     if (!Number.isFinite(quantity) || quantity < 0.001 || (!fractionalAllowed && !Number.isInteger(quantity)) || (fractionalAllowed && Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 0.000001)) {
       throw apiError_((fractionalAllowed ? 'Enter a valid quantity with up to three decimal places for ' : 'Enter a whole-number quantity for ') + product['Product Name'] + '.', 400);
     }
@@ -1205,11 +1429,17 @@ function createInvoice_(config, payload, userEmail) {
     const unitCostValue = product['Unit Cost'] === '' ? 0 : Number(product['Unit Cost']);
     if (!Number.isFinite(unitCostValue) || unitCostValue < 0) throw apiError_('Cost information is invalid for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
     const discount = Number(item.discount || 0);
-    if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * quantity) throw apiError_('Discount must be between zero and the item total.', 400);
+    const measureQuantity = pricingUnit ? Number(item.measureQuantity) : quantity;
+    if (pricingUnit && (!Number.isFinite(measureQuantity) || measureQuantity < 0.001 || measureQuantity > 100000 || Math.abs(measureQuantity * 1000 - Math.round(measureQuantity * 1000)) > 0.000001)) {
+      throw apiError_('Enter the total weight or length for ' + product['Product Name'] + ' (up to three decimal places).', 400);
+    }
+    const pricedQuantity = pricingUnit ? measureQuantity : quantity;
+    if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * pricedQuantity) throw apiError_('Discount must be between zero and the item total.', 400);
     return {
       sku: String(product.SKU), name: String(product['Product Name']), category: String(product.Category || ''),
-      quantity: quantity, fractionalQuantity: fractionalAllowed, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
-      lineTotal: Math.max(0, Math.round(quantity * unitPrice - discount)),
+      quantity: quantity, measureQuantity: pricingUnit ? measureQuantity : 0, pricingUnit: pricingUnit,
+      fractionalQuantity: fractionalAllowed, unit: unit, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
+      lineTotal: Math.max(0, Math.round(pricedQuantity * unitPrice - discount)),
     };
   });
 
@@ -1245,7 +1475,7 @@ function createInvoice_(config, payload, userEmail) {
   }
   const total = subtotal - billDiscount;
   if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
-  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + line.quantity * line.unitCost; }, 0);
+  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + (line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitCost; }, 0);
   if (total + 0.000001 < combinedCost) {
     throw apiError_('Discount is too high. The bill total cannot be below the combined purchase cost of the items.', 400);
   }
@@ -1258,28 +1488,15 @@ function createInvoice_(config, payload, userEmail) {
   if (amountReceived > 0 && !['Cash', 'UPI', 'Card'].includes(paymentMethod)) throw apiError_('Choose Cash, UPI, or Card for the amount received.', 400);
   const due = total - amountReceived;
   const savedPaymentMode = due > 0 ? 'Credit' : paymentMethod;
-  const paymentTable = ensurePaymentsTable_(config);
-
-  // Reserve enough distinct rows for every line before generating a PDF or writing anything.
+  // Reserve all bill, item, and payment rows before writing the transaction.
   const invoiceRow = nextFreeRow_(invoices);
   const salesRows = nextFreeRows_(salesItems, resolvedLines.length);
   const paymentRow = amountReceived > 0 ? nextFreeRow_(paymentTable) : 0;
   const receiptNumber = amountReceived > 0 ? newId_('RCPT') : '';
   const number = invoiceNumber_();
   const date = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd');
-  const invoice = { number: number, date: date, subtotal: subtotal, discount: billDiscount, total: total, paymentMode: savedPaymentMode, paid: amountReceived, due: due };
   const customerSummary = { name: name || String(customer['Customer Name']), phone: phone };
-  let createdPdfId = '';
   try {
-    const pdf = buildInvoicePdf_(invoice, customerSummary, resolvedLines);
-    const file = Drive.Files.create({
-      name: number + '.pdf',
-      mimeType: 'application/pdf',
-      parents: [config.invoiceFolderId],
-    }, pdf, { fields: 'id,webViewLink' });
-    createdPdfId = file.id;
-    shareInvoice_(file.id, config.authorizedEmails);
-
     plans.push({
       title: 'Sales Invoices', table: invoices, rowNumber: invoiceRow,
       record: {
@@ -1287,7 +1504,7 @@ function createInvoice_(config, payload, userEmail) {
         Date: dateSerial_(date),
         'Customer ID': customer['Customer ID'],
         'Payment Mode': savedPaymentMode,
-        'Invoice File': file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view',
+        'Invoice File': '',
         'Customer Phone': phone,
         Status: 'ACTIVE',
       },
@@ -1295,7 +1512,7 @@ function createInvoice_(config, payload, userEmail) {
     resolvedLines.forEach(function (line, index) {
       plans.push({
         title: 'Sales Items', table: salesItems, rowNumber: salesRows[index],
-        record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, Discount: line.discount, Status: 'ACTIVE' },
+        record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, Discount: line.discount, Status: 'ACTIVE', Unit: line.unit, 'Pricing Unit': line.pricingUnit, 'Measure Quantity': line.measureQuantity || '' },
       });
     });
     if (amountReceived > 0) {
@@ -1310,43 +1527,62 @@ function createInvoice_(config, payload, userEmail) {
       });
     }
     writeRecords_(config, plans, ['Inventory', 'Customers', 'Sales Invoices', 'Sales Items', 'Payments']);
-    createdPdfId = '';
-    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, subtotal: subtotal, discount: billDiscount, total: total, paid: amountReceived, due: due, paymentMode: savedPaymentMode, pdfUrl: file.webViewLink || 'https://drive.google.com/file/d/' + file.id + '/view' };
+    return { invoiceNumber: number, customer: customerSummary, items: resolvedLines, subtotal: subtotal, discount: billDiscount, total: total, paid: amountReceived, due: due, paymentMode: savedPaymentMode, pdfUrl: '' };
   } catch (error) {
-    if (createdPdfId) {
-      try { Drive.Files.delete(createdPdfId); } catch (cleanupError) { console.error(cleanupError); }
-    }
     throw error;
   }
 }
 
 function getTable_(config, title) {
-  if (title === 'Stock Adjustments') ensureStockAdjustmentsSheet_(config);
-  if (title === 'Inventory') {
-    ensureStockAdjustmentsSheet_(config);
-    ensureColumn_(config, title, 'Availability');
-    ensureColumn_(config, title, 'Fractional Quantity');
-  }
-  if (title === 'Sales Invoices' || title === 'Sales Items') ensureColumn_(config, title, 'Status');
-  const required = APP.sheets[title];
-  if (!required) throw apiError_('Unsupported sheet tab: ' + title, 500);
+  return getTables_(config, [title])[title];
+}
+
+/** Read multiple Shop tabs with one metadata request and one Sheets batchGet. */
+function getTables_(config, requestedTitles) {
+  const titles = Array.from(new Set(requestedTitles));
+  titles.forEach(function (title) {
+    if (!APP.sheets[title]) throw apiError_('Unsupported sheet tab: ' + title, 500);
+    if (title === 'Stock Adjustments') ensureStockAdjustmentsSheet_(config);
+    if (title === 'Inventory') {
+      ensureStockAdjustmentsSheet_(config);
+      ensureColumns_(config, title, ['Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit']);
+    }
+    if (title === 'Sales Invoices' || title === 'Sales Items') ensureColumn_(config, title, 'Status');
+  });
+
   const spreadsheet = Sheets.Spreadsheets.get(config.spreadsheetId, { fields: 'sheets(properties(sheetId,title))' });
-  const properties = (spreadsheet.sheets || []).map(function (sheet) { return sheet.properties; }).find(function (sheet) { return sheet.title === title; });
-  if (!properties) throw apiError_("Required tab '" + title + "' is missing from Shop.", 500);
-  const range = "'" + title.replace(/'/g, "''") + "'!A1:Z" + APP.maxRows;
-  const result = Sheets.Spreadsheets.Values.get(config.spreadsheetId, range, { valueRenderOption: 'UNFORMATTED_VALUE' });
-  const values = result.values || [];
-  const headers = (values[0] || []).map(String);
-  const missing = required.filter(function (header) { return headers.indexOf(header) < 0; });
-  if (missing.length) throw apiError_('Tab ' + title + ' is missing columns: ' + missing.join(', '), 500);
-  const rows = [];
-  for (let index = 1; index < APP.maxRows; index += 1) {
-    const valuesRow = values[index] || [];
-    const row = { _rowNumber: index + 1 };
-    headers.forEach(function (header, column) { row[header] = valuesRow[column] === undefined ? '' : valuesRow[column]; });
-    if (String(row[APP.primaryKey[title]] || '').trim()) rows.push(row);
-  }
-  return { sheetId: properties.sheetId, spreadsheetId: config.spreadsheetId, headers: headers, rows: rows, title: title };
+  const propertiesByTitle = {};
+  (spreadsheet.sheets || []).forEach(function (sheet) { propertiesByTitle[sheet.properties.title] = sheet.properties; });
+  const ranges = titles.map(function (title) {
+    if (!propertiesByTitle[title]) throw apiError_("Required tab '" + title + "' is missing from Shop.", 500);
+    return "'" + title.replace(/'/g, "''") + "'!A1:Z" + APP.maxRows;
+  });
+  const batch = Sheets.Spreadsheets.Values.batchGet(config.spreadsheetId, {
+    ranges: ranges,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const result = {};
+  titles.forEach(function (title, tableIndex) {
+    const values = ((batch.valueRanges || [])[tableIndex] || {}).values || [];
+    const headers = (values[0] || []).map(String);
+    const missing = APP.sheets[title].filter(function (header) { return headers.indexOf(header) < 0; });
+    if (missing.length) throw apiError_('Tab ' + title + ' is missing columns: ' + missing.join(', '), 500);
+    const rows = [];
+    for (let index = 1; index < APP.maxRows; index += 1) {
+      const valuesRow = values[index] || [];
+      const row = { _rowNumber: index + 1 };
+      headers.forEach(function (header, column) { row[header] = valuesRow[column] === undefined ? '' : valuesRow[column]; });
+      if (String(row[APP.primaryKey[title]] || '').trim()) rows.push(row);
+    }
+    result[title] = {
+      sheetId: propertiesByTitle[title].sheetId,
+      spreadsheetId: config.spreadsheetId,
+      headers: headers,
+      rows: rows,
+      title: title,
+    };
+  });
+  return result;
 }
 
 function nextFreeRow_(table) {
@@ -1366,39 +1602,25 @@ function nextFreeRows_(table, count) {
 }
 
 function writeRecords_(config, rowPlans, affectedTables) {
-  const tables = {};
-  Array.from(new Set(affectedTables.concat(rowPlans.map(function (plan) { return plan.title; }))).values()).forEach(function (title) {
-    tables[title] = rowPlans.find(function (plan) { return plan.title === title; })?.table || getTable_(config, title);
-  });
+  // Refill formulas only in rows written by this transaction. Rewriting every
+  // formula row on every sale makes Sheets recalculate the whole workbook and
+  // needlessly delays the bill response. Existing formulas recalculate from
+  // the changed cells automatically.
   const requests = [];
   rowPlans.forEach(function (plan) {
     requests.push.apply(requests, updateRowRequest_(plan.table, plan.rowNumber, plan.record));
-  });
-  affectedTables.forEach(function (title) {
-    const table = tables[title];
-    const plannedRows = rowPlans.filter(function (plan) { return plan.title === title; }).map(function (plan) { return plan.rowNumber; });
-    const lastRow = Math.max(1, ...table.rows.map(function (row) { return row._rowNumber; }), ...plannedRows);
-    const formulaSamples = formulasForRow_(title, 2);
-    Object.keys(formulaSamples).forEach(function (header) {
-      const columnIndex = table.headers.indexOf(header);
-      if (columnIndex < 0 || lastRow < 2) return;
-      const formulaRows = [];
-      for (let row = 2; row <= lastRow; row += 1) formulaRows.push({ values: [{ userEnteredValue: { formulaValue: formulasForRow_(title, row)[header] } }] });
+    const formulas = formulasForRow_(plan.title, plan.rowNumber);
+    Object.keys(formulas).forEach(function (header) {
+      const columnIndex = plan.table.headers.indexOf(header);
+      if (columnIndex < 0) return;
       requests.push({
         updateCells: {
-          range: { sheetId: table.sheetId, startRowIndex: 1, endRowIndex: lastRow, startColumnIndex: columnIndex, endColumnIndex: columnIndex + 1 },
-          rows: formulaRows,
+          range: { sheetId: plan.table.sheetId, startRowIndex: plan.rowNumber - 1, endRowIndex: plan.rowNumber, startColumnIndex: columnIndex, endColumnIndex: columnIndex + 1 },
+          rows: [{ values: [{ userEnteredValue: { formulaValue: formulas[header] } }] }],
           fields: 'userEnteredValue',
         },
       });
     });
-    if (title === 'Inventory') {
-      const qrIndex = table.headers.indexOf('QR Code');
-      if (qrIndex >= 0) {
-        const formula = '=MAP(A2:A1000,LAMBDA(sku,IF(sku="","",IMAGE("https://quickchart.io/qr?text="&ENCODEURL(sku)&"&size=150&margin=1))))';
-        requests.push({ updateCells: { range: { sheetId: table.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: qrIndex, endColumnIndex: qrIndex + 1 }, rows: [{ values: [{ userEnteredValue: { formulaValue: formula } }] }], fields: 'userEnteredValue' } });
-      }
-    }
   });
   if (requests.length) Sheets.Spreadsheets.batchUpdate({ requests: requests }, config.spreadsheetId);
 }
@@ -1436,7 +1658,7 @@ function formulasForRow_(title, row) {
     'Purchased Qty': '=IF(A' + row + '="","",SUMIFS(\'Purchase Items\'!$F$2:$F$1000,\'Purchase Items\'!$C$2:$C$1000,A' + row + '))',
     'Sold Qty': '=IF(A' + row + '="","",SUMIFS(\'Sales Items\'!$F$2:$F$1000,\'Sales Items\'!$C$2:$C$1000,A' + row + ',\'Sales Items\'!$L$2:$L$1000,"<>VOIDED"))',
     'Current Stock': '=IF(A' + row + '="","",G' + row + '+I' + row + '-J' + row + '+SUMIFS(\'Stock Adjustments\'!$D$2:$D$1000,\'Stock Adjustments\'!$C$2:$C$1000,A' + row + '))',
-    'Stock Value': '=IF(A' + row + '="","",K' + row + '*E' + row + ')',
+    'Stock Value': '=IF(A' + row + '="","",IF(S' + row + '<>"","",K' + row + '*E' + row + '))',
     'Stock Status': '=IF(A' + row + '="","",IF(K' + row + '<=0,"Out of Stock",IF(K' + row + '<=H' + row + ',"Low Stock","OK")))',
   };
   if (title === 'Customers') return {
@@ -1455,8 +1677,8 @@ function formulasForRow_(title, row) {
     'Product Name': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,2,FALSE),""))',
     Category: '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,3,FALSE),""))',
     'Unit Price': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,6,FALSE),""))',
-    'Line Total': '=IF(OR(C' + row + '="",F' + row + '=""),"",ROUND(MAX(0,F' + row + '*G' + row + '-H' + row + '),0))',
-    COGS: '=IF(OR(C' + row + '="",F' + row + '=""),"",F' + row + '*IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,5,FALSE),0))',
+    'Line Total': '=IF(OR(C' + row + '="",F' + row + '=""),"",ROUND(MAX(0,IF(O' + row + '>0,O' + row + ',F' + row + ')*G' + row + '-H' + row + '),0))',
+    COGS: '=IF(OR(C' + row + '="",F' + row + '=""),"",IF(O' + row + '>0,O' + row + ',F' + row + ')*IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,5,FALSE),0))',
     'Gross Profit': '=IF(OR(C' + row + '="",F' + row + '=""),"",I' + row + '-J' + row + ')',
   };
   return {};
@@ -1478,7 +1700,12 @@ function buildInvoicePdf_(invoice, customer, lines) {
     ? Number(dateParts[2]) + ' ' + monthNames[Number(dateParts[1]) - 1] + ' ' + dateParts[0]
     : String(invoice.date || '');
   const bodyRows = lines.map(function (line) {
-    return '<tr><td class="item">' + escape(line.name) + '</td><td class="num">' + Number(line.quantity) + (line.fractionalQuantity ? ' m' : '') + '</td><td class="num">' + money(line.unitPrice) + (line.fractionalQuantity ? ' / m' : '') + '</td><td class="num">' + money(line.lineTotal) + '</td></tr>';
+    const unit = normalizedProductUnit_(line.unit, line.fractionalQuantity);
+    const quantityUnit = unit === 'KG' ? ' kg' : unit === 'METRE' ? ' m' : ' pcs';
+    const pricedMeasure = normalizedPricingUnit_(line.pricingUnit);
+    const quantityLabel = pricedMeasure ? Number(line.quantity) + quantityUnit + ' · ' + Number(line.measureQuantity) + (pricedMeasure === 'KG' ? ' kg' : ' m') : Number(line.quantity) + quantityUnit;
+    const priceUnit = pricedMeasure ? ' / ' + (pricedMeasure === 'KG' ? 'kg' : 'm') : (unit === 'PIECE' ? ' each' : ' / ' + (unit === 'KG' ? 'kg' : 'm'));
+    return '<tr><td class="item">' + escape(line.name) + '</td><td class="num">' + quantityLabel + '</td><td class="num">' + money(line.unitPrice) + priceUnit + '</td><td class="num">' + money(line.lineTotal) + '</td></tr>';
   }).join('');
   const logo = '<svg class="brand-mark" viewBox="0 0 100 74" role="img" aria-label="Avani Suto logo"><path fill="#102f50" d="M8 67 38 8c3-6 10-6 13 0l26 59H60L43 28 24 67Z"/><path fill="#df713f" d="m44 7 8 1 28 59H65L49 32 39 51 31 55Z"/><path fill="#102f50" d="M22 47 63 39l7 12-54 9Z"/><path fill="#df713f" d="M66 58h15l4 8H70Z"/></svg>';
   const html = '<!doctype html><html><head><meta charset="utf-8"><style>' +
