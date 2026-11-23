@@ -171,7 +171,7 @@ fun SearchScreen(
                                     onProductQr(product)
                                 },
                                 contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
-                            ) { Text(tr("Create & share QR PDF", "QR PDF बनाएँ और साझा करें")) }
+                            ) { Text(tr("Print QR labels", "QR लेबल प्रिंट करें")) }
                         }
                     }
                     if (product.stock <= 0) Text(

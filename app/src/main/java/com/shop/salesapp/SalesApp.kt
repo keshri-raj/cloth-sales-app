@@ -1262,13 +1262,24 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     fun shareQrLabelPdf(selectedProducts: List<Product>) {
         runCatching {
             val pdf = QrLabelPrinter.createLabelPdf(context, selectedProducts)
-            BillPdfShare.sharePdfFile(
-                context,
-                pdf,
-                "Share QR label PDF",
-                "Cloth QR labels",
-                "${selectedProducts.size} cloth QR label(s). For PSF20 printing, choose the printer app and match the label stock size (50 × 25 mm)."
-            )
+            val downloadsPath = runCatching { QrLabelPrinter.saveToDownloads(context, pdf) }.getOrNull()
+            val printerApp = context.packageManager.getLaunchIntentForPackage("com.caysn.shreyanseasylabel")
+            if (downloadsPath != null && printerApp != null) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Saved to $downloadsPath. In Shreyans, choose Print Documents → PDF Printing → Label printer → Custom 48×26 mm → Choose PDF.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                context.startActivity(printerApp)
+            } else {
+                BillPdfShare.sharePdfFile(
+                    context,
+                    pdf,
+                    "Print QR labels",
+                    "Cloth QR labels",
+                    "${selectedProducts.size} cloth QR label(s), sized 48 × 26 mm for the PSF-20 label roll."
+                )
+            }
         }.onFailure { message = it.message ?: "Could not create the QR label PDF." }
     }
 
@@ -1997,6 +2008,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         selectedCatalogProduct = product
                         navigateTo(Screen.ProductDetail)
                     },
+                    onPrintLabels = ::shareQrLabelPdf,
                     onShareCatalog = { shareCatalogPdf() },
                     onBack = { navigateBack() }
                 )
@@ -2178,7 +2190,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             val product = products.firstOrNull { it.sku == sku }
                             if (product == null) message = "Cloth saved, but it is not in the local list yet. Use Find a cloth to print its QR label."
                             else shareQrLabelPdf(listOf(product))
-                        }) { Text(tr("Share label PDF", "लेबल PDF साझा करें")) }
+                        }) { Text(tr("Print QR labels", "QR लेबल प्रिंट करें")) }
                         TextButton(onClick = {
                             createdQrSku = null
                             productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
@@ -2198,11 +2210,11 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         Image(qrBitmap, contentDescription = "QR code for ${product.name}", modifier = Modifier.size(190.dp))
                         Text(product.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(product.sku, color = Muted, fontSize = 15.sp)
-                        Text(tr("Create a 50 × 25 mm PDF, then choose a printer app or WhatsApp from Share.", "50 × 25 मिमी PDF बनाएँ, फिर साझा करें में प्रिंटर ऐप या WhatsApp चुनें।"), color = Muted, fontSize = 14.sp)
+                        Text(tr("Print on PSF-20 label roll (48 × 26 mm). Label includes QR, name, price and SKU.", "PSF-20 लेबल रोल (48 × 26 मिमी) पर प्रिंट करें। लेबल में QR, नाम, कीमत और SKU होगा।"), color = Muted, fontSize = 14.sp)
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { shareQrLabelPdf(listOf(product)) }) { Text(tr("Create & share PDF", "PDF बनाएँ और साझा करें")) }
+                    TextButton(onClick = { shareQrLabelPdf(listOf(product)) }) { Text(tr("Print QR label", "QR लेबल प्रिंट करें")) }
                 },
                 dismissButton = {
                     TextButton(onClick = { qrPreviewProduct = null }) { Text(tr("Close", "बंद करें")) }

@@ -18,10 +18,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Print
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,10 +80,14 @@ fun CatalogScreen(
     imageLoader: suspend (String) -> ByteArray?,
     onProductQr: (Product) -> Unit,
     onProductDetails: (Product) -> Unit,
+    onPrintLabels: (List<Product>) -> Unit,
     onShareCatalog: () -> Unit,
     onBack: () -> Unit
 ) {
     var showUnavailable by remember { mutableStateOf(false) }
+    var selectingForPrint by remember { mutableStateOf(false) }
+    val selectedSkus = remember { mutableStateListOf<String>() }
+    val selectedProducts = products.filter { it.sku in selectedSkus && it.available }
     val activeProducts = products.filter {
         it.available && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.sku.contains(query, ignoreCase = true))
     }
@@ -105,6 +113,41 @@ fun CatalogScreen(
             shape = RoundedCornerShape(16.dp)
         )
         Spacer(Modifier.height(10.dp))
+        if (!selectingForPrint) {
+            OutlinedButton(
+                onClick = { selectingForPrint = true },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Rounded.Print, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(8.dp))
+                Text(tr("Select products to print labels", "लेबल प्रिंट करने के लिए कपड़े चुनें"))
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    tr("${selectedProducts.size} selected", "${selectedProducts.size} चुने"),
+                    color = Ink,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    selectedSkus.clear()
+                    selectingForPrint = false
+                }) { Text(tr("Cancel", "रद्द करें")) }
+                Button(
+                    onClick = { onPrintLabels(selectedProducts) },
+                    enabled = selectedProducts.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Rounded.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text(tr("Print labels", "लेबल प्रिंट करें"))
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 18.dp)) {
             if (isAdministrator) item {
                 AdminDeletionRequestsSection("PRODUCT", requests, onReviewRequest)
@@ -113,7 +156,14 @@ fun CatalogScreen(
                 CatalogCompactProductCard(
                     product = product,
                     imageLoader = imageLoader,
-                    onDetails = { onProductDetails(product) },
+                    selectionMode = selectingForPrint,
+                    selected = product.sku in selectedSkus,
+                    onDetails = {
+                        if (selectingForPrint) {
+                            if (product.sku in selectedSkus) selectedSkus.remove(product.sku)
+                            else selectedSkus.add(product.sku)
+                        } else onProductDetails(product)
+                    },
                     onShowQr = { onProductQr(product) }
                 )
             }
@@ -162,6 +212,8 @@ fun CatalogScreen(
 fun CatalogCompactProductCard(
     product: Product,
     imageLoader: suspend (String) -> ByteArray?,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
     onDetails: () -> Unit,
     onShowQr: () -> Unit
 ) {
@@ -207,7 +259,11 @@ fun CatalogCompactProductCard(
                         )
                     }
                 }
-                Icon(Icons.Rounded.ChevronRight, contentDescription = tr("View cloth details", "कपड़े की जानकारी देखें"), tint = Ink)
+                if (selectionMode) {
+                    Checkbox(checked = selected, onCheckedChange = { onDetails() })
+                } else {
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = tr("View cloth details", "कपड़े की जानकारी देखें"), tint = Ink)
+                }
             }
         }
     }
