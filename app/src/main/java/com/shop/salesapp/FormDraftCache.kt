@@ -68,7 +68,8 @@ internal object OrderFormDraftCache {
                         unit = row.optString("unit").ifBlank { if (fractional) "METRE" else "PIECE" },
                         pricingUnit = row.optString("pricingUnit"),
                         sizeVariant = row.optString("sizeVariant"),
-                        dateAdded = row.optString("dateAdded")
+                        dateAdded = row.optString("dateAdded"),
+                        costPrice = row.optInt("costPrice")
                     )
                     CartLine(product, row.optDouble("quantity", 0.0), row.optDouble("measureQuantity").takeIf { row.has("measureQuantity") })
                 }
@@ -204,13 +205,15 @@ internal object BillFormDraftCache {
                         unit = row.optString("unit").ifBlank { if (fractional) "METRE" else "PIECE" },
                         pricingUnit = row.optString("pricingUnit"),
                         sizeVariant = row.optString("sizeVariant"),
-                        dateAdded = row.optString("dateAdded")
+                        dateAdded = row.optString("dateAdded"),
+                        costPrice = row.optInt("costPrice")
                     )
                     CartLine(
                         product = product,
                         quantity = row.optDouble("quantity", 0.0),
                         measureQuantity = row.optDouble("measureQuantity").takeIf { row.has("measureQuantity") },
-                        unitPrice = row.optInt("unitPrice", product.price)
+                        unitPrice = row.optInt("unitPrice", product.price),
+                        sellAtCost = row.optBoolean("sellAtCost", false)
                     )
                 }
             }
@@ -256,9 +259,11 @@ internal object BillFormDraftCache {
                     .put("pricingUnit", product.pricingUnit)
                     .put("sizeVariant", product.sizeVariant)
                     .put("dateAdded", product.dateAdded)
+                    .put("costPrice", product.costPrice)
                     .put("quantity", line.quantity)
                     .put("measureQuantity", line.measureQuantity)
                     .put("unitPrice", line.unitPrice)
+                    .put("sellAtCost", line.sellAtCost)
             )
         }
         val root = JSONObject()

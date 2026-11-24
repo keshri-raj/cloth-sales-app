@@ -10,7 +10,8 @@ data class CartLine(
     val product: Product,
     val quantity: Double,
     val measureQuantity: Double? = null,
-    val unitPrice: Int = product.price
+    val unitPrice: Int = product.price,
+    val sellAtCost: Boolean = false
 )
 
 data class CustomerHistoryItem(

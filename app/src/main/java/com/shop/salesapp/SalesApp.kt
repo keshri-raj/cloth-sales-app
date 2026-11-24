@@ -1106,6 +1106,14 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     BillCache.save(context, freshBills)
                     madePayments = mergePaymentHistory(freshPayments, LocalPaymentLog.loadAll(context))
                 }
+                if (approve && type == "BILL") {
+                    val freshProducts = withContext(Dispatchers.IO) { api.products(token, "") }
+                    val authoritativeProducts = ProductCache.merge(emptyList(), freshProducts)
+                    products.clear()
+                    products.addAll(authoritativeProducts)
+                    hasLiveProducts = true
+                    ProductCache.save(context, authoritativeProducts)
+                }
                 if (approve && type == "ORDER") {
                     val freshOrders = withContext(Dispatchers.IO) { api.orderRequests(token, "") }
                     orderRequests = freshOrders
@@ -1777,7 +1785,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                 }.onSuccess { created ->
                                     NewClothFormDraftCache.clear(context)
                                     val addedDate = created.dateAdded.ifBlank { java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).toString() }
-                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit, created.sizeVariant, addedDate)
+                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit, created.sizeVariant, addedDate, created.costPrice)
                                     val merged = ProductCache.merge(products.toList(), listOf(newProduct))
                                     products.clear()
                                     products.addAll(merged)
@@ -1938,9 +1946,13 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         val index = cart.indexOfFirst { it.product.sku == sku }
                         if (index >= 0) cart[index] = cart[index].copy(measureQuantity = measure)
                     },
-                    onSetUnitPrice = { sku, price ->
+                    onSetUnitPrice = { sku, price, sellAtCost ->
                         val index = cart.indexOfFirst { it.product.sku == sku }
-                        if (index >= 0 && price > 0) cart[index] = cart[index].copy(unitPrice = price)
+                        if (index >= 0 && price > 0 && price >= cart[index].product.costPrice &&
+                            (!sellAtCost || price == cart[index].product.costPrice)
+                        ) {
+                            cart[index] = cart[index].copy(unitPrice = price, sellAtCost = sellAtCost)
+                        }
                     },
                     onSave = {
                         if (screen == Screen.PlaceOrder) {

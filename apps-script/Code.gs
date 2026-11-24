@@ -562,6 +562,7 @@ function listProducts_(config, query) {
   ensureColumn_(config, 'Inventory', 'Size / Variant');
   ensureColumn_(config, 'Inventory', 'Date Added');
   const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) voidOrphanedSalesItems_(config);
   const table = getTable_(config, 'Inventory');
   const products = table.rows.filter(function (row) {
     return !normalizedQuery || String(row.SKU).toLowerCase().includes(normalizedQuery) || String(row['Product Name']).toLowerCase().includes(normalizedQuery) || String(row['Size / Variant'] || '').toLowerCase().includes(normalizedQuery);
@@ -573,6 +574,7 @@ function listProducts_(config, query) {
       dateAdded: productDateAdded_(row['Date Added']),
       category: String(row.Category || ''),
       price: Number(row['Selling Price'] || 0),
+      costPrice: Number(row['Unit Cost'] || 0),
       stock: Number(row['Current Stock'] || 0),
       fractionalQuantity: fractionalQuantityEnabled_(row['Fractional Quantity']),
       unit: productUnit_(row),
@@ -583,6 +585,29 @@ function listProducts_(config, query) {
     };
   });
   return { products: products };
+}
+
+function voidOrphanedSalesItems_(config) {
+  const tables = getTables_(config, ['Sales Invoices', 'Sales Items']);
+  const activeInvoices = new Set(tables['Sales Invoices'].rows
+    .filter(function (row) { return String(row.Status || '').toUpperCase() !== 'VOIDED'; })
+    .map(function (row) { return String(row['Invoice #'] || '').trim(); }));
+  const items = tables['Sales Items'];
+  const statusColumn = items.headers.indexOf('Status');
+  const requests = items.rows.filter(function (row) {
+    return String(row.Status || '').toUpperCase() !== 'VOIDED' &&
+      !activeInvoices.has(String(row['Invoice #'] || '').trim());
+  }).map(function (row) {
+    return { updateCells: {
+      range: { sheetId: items.sheetId, startRowIndex: row._rowNumber - 1, endRowIndex: row._rowNumber, startColumnIndex: statusColumn, endColumnIndex: statusColumn + 1 },
+      rows: [{ values: [{ userEnteredValue: { stringValue: 'VOIDED' } }] }],
+      fields: 'userEnteredValue',
+    } };
+  });
+  if (requests.length) {
+    Sheets.Spreadsheets.batchUpdate({ requests: requests }, config.spreadsheetId);
+    SpreadsheetApp.flush();
+  }
 }
 
 function createCustomer_(config, payload) {
@@ -1380,7 +1405,7 @@ function createProduct_(config, payload) {
       Availability: 'Available',
     },
   }], ['Inventory']);
-  return { sku: sku, name: name, sizeVariant: sizeVariant, dateAdded: dateAdded, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
+  return { sku: sku, name: name, sizeVariant: sizeVariant, dateAdded: dateAdded, price: sellingPrice, costPrice: unitCost, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
 }
 
 function normalizedPricingUnit_(value) {
@@ -1449,6 +1474,13 @@ function createInvoice_(config, payload, userEmail) {
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw apiError_('A valid selling price is missing for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
     const unitCostValue = product['Unit Cost'] === '' ? 0 : Number(product['Unit Cost']);
     if (!Number.isFinite(unitCostValue) || unitCostValue < 0) throw apiError_('Cost information is invalid for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
+    const sellAtCost = item.sellAtCost === true;
+    if (sellAtCost && Math.abs(unitPrice - unitCostValue) > 0.001) {
+      throw apiError_('Cost-price sale must use the exact cost price for ' + product['Product Name'] + '.', 400);
+    }
+    if (!sellAtCost && unitPrice < unitCostValue) {
+      throw apiError_('Unit price cannot be below cost for ' + product['Product Name'] + '. Use the cost-price option to sell at cost.', 400);
+    }
     const discount = Number(item.discount || 0);
     const measureQuantity = pricingUnit ? Number(item.measureQuantity) : quantity;
     if (pricingUnit && (!Number.isFinite(measureQuantity) || measureQuantity < 0.001 || measureQuantity > 100000 || Math.abs(measureQuantity * 1000 - Math.round(measureQuantity * 1000)) > 0.000001)) {

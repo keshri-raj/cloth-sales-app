@@ -20,7 +20,8 @@ data class Product(
     /** Optional price basis for piece-counted items whose per-piece weight/length varies. */
     val pricingUnit: String = "",
     val sizeVariant: String = "",
-    val dateAdded: String = ""
+    val dateAdded: String = "",
+    val costPrice: Int = 0
 )
 data class ShopSession(val email: String, val role: String)
 data class DeletionRequest(
@@ -37,7 +38,7 @@ data class DeletionRequest(
 )
 
 data class ShopCustomer(val id: String, val name: String, val phone: String, val email: String)
-data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false, val unit: String = if (fractionalQuantity) "METRE" else "PIECE", val pricingUnit: String = "", val sizeVariant: String = "", val dateAdded: String = "")
+data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false, val unit: String = if (fractionalQuantity) "METRE" else "PIECE", val pricingUnit: String = "", val sizeVariant: String = "", val dateAdded: String = "", val costPrice: Int = 0)
 data class CreatedInvoice(
     val invoiceNumber: String, val total: Int, val pdfUrl: String, val paid: Int, val due: Int,
     val paymentMode: String, val subtotal: Int, val discount: Int, val items: List<InvoiceLine>
@@ -148,7 +149,8 @@ class ShopApiClient(baseUrl: String) {
                 unit = row.optString("unit").ifBlank { if (row.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
                 pricingUnit = row.optString("pricingUnit"),
                 sizeVariant = row.optString("sizeVariant"),
-                dateAdded = row.optString("dateAdded")
+                dateAdded = row.optString("dateAdded"),
+                costPrice = row.optDouble("costPrice").toInt()
             )
         }
     }
@@ -392,7 +394,7 @@ class ShopApiClient(baseUrl: String) {
             .put("sizeVariant", sizeVariant)
             .put("imageBase64", imageBase64)
         val row = request("createProduct", idToken, body)
-        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock"), row.optString("imageId"), row.optBoolean("fractionalQuantity", fractionalQuantity), row.optString("unit").ifBlank { unit }, row.optString("pricingUnit", pricingUnit), row.optString("sizeVariant", sizeVariant), row.optString("dateAdded"))
+        return CreatedProduct(row.optString("sku"), row.optString("name"), row.optDouble("price").toInt(), row.optDouble("stock"), row.optString("imageId"), row.optBoolean("fractionalQuantity", fractionalQuantity), row.optString("unit").ifBlank { unit }, row.optString("pricingUnit", pricingUnit), row.optString("sizeVariant", sizeVariant), row.optString("dateAdded"), row.optDouble("costPrice").toInt())
     }
 
     fun createInvoice(
@@ -409,7 +411,7 @@ class ShopApiClient(baseUrl: String) {
     ): CreatedInvoice {
         val lineItems = JSONArray()
         items.forEach { line ->
-            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.measureQuantity ?: 0.0).put("unitPrice", line.unitPrice).put("discount", 0))
+            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.measureQuantity ?: 0.0).put("unitPrice", line.unitPrice).put("sellAtCost", line.sellAtCost).put("discount", 0))
         }
         val body = JSONObject()
             .put("customer", JSONObject().put("name", customerName).put("phone", customerPhone).put("email", customerEmail).put("address", customerAddress))

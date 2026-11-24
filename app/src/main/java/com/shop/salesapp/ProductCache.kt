@@ -31,7 +31,8 @@ object ProductCache {
                     unit = row.optString("unit").ifBlank { if (row.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
                     pricingUnit = row.optString("pricingUnit"),
                     sizeVariant = row.optString("sizeVariant"),
-                    dateAdded = row.optString("dateAdded")
+                    dateAdded = row.optString("dateAdded"),
+                    costPrice = row.optDouble("costPrice").toInt()
                 )
             }
         }.getOrDefault(emptyList())
@@ -54,6 +55,7 @@ object ProductCache {
                     .put("pricingUnit", product.pricingUnit)
                     .put("sizeVariant", product.sizeVariant)
                     .put("dateAdded", product.dateAdded)
+                    .put("costPrice", product.costPrice)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

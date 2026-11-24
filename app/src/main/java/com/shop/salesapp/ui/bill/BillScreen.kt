@@ -237,7 +237,7 @@ fun BillScreen(
     onQuantity: (String, Double) -> Unit,
     onSetQuantity: (String, Double) -> Unit,
     onSetMeasureQuantity: (String, Double?) -> Unit,
-    onSetUnitPrice: (String, Int) -> Unit,
+    onSetUnitPrice: (String, Int, Boolean) -> Unit,
     onSave: () -> Unit,
     onBack: () -> Unit,
     onClear: () -> Unit
@@ -248,6 +248,8 @@ fun BillScreen(
     var discountDraft by remember { mutableStateOf("") }
     var editingPriceSku by remember { mutableStateOf<String?>(null) }
     var priceDraft by remember { mutableStateOf("") }
+    var manualPriceDraft by remember { mutableStateOf("") }
+    var sellAtCostDraft by remember { mutableStateOf(false) }
     var showSavedCustomerPicker by remember { mutableStateOf(false) }
     var savedCustomerQuery by remember { mutableStateOf("") }
     var promptedCustomerPhone by remember { mutableStateOf("") }
@@ -258,9 +260,12 @@ fun BillScreen(
     val discountAmount = parsedDiscount.roundToInt()
     val total = subtotal - discountAmount
     val validDiscount = !discountEnabled || (discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 && discountAmount <= subtotal && total > 0)
-    val validCart = cart.isNotEmpty() && cart.all {
-        validCartQuantity(it, enforceStock = !orderMode, requirePriceMeasure = !orderMode) && it.unitPrice > 0
+    val validCartQuantityAndPrice = cart.all {
+        validCartQuantity(it, enforceStock = !orderMode, requirePriceMeasure = !orderMode) && it.unitPrice > 0 &&
+            (orderMode || (it.unitPrice >= it.product.costPrice && (!it.sellAtCost || it.unitPrice == it.product.costPrice)))
     }
+    val validCart = cart.isNotEmpty() && validCartQuantityAndPrice
+    val hasBelowCostPrice = !orderMode && cart.any { it.unitPrice < it.product.costPrice }
     val paidPaymentMethods = setOf("Cash", "UPI", "Card")
     val isCredit = paymentMode == "Credit"
     val paidStatusSelected = paymentMode == "Paid" || paymentMode in paidPaymentMethods
@@ -280,6 +285,7 @@ fun BillScreen(
         customerExists == null -> tr("Checking customer details…", "ग्राहक की जानकारी जाँची जा रही है…")
         customerExists == false && customerName.isBlank() -> tr("Enter customer name to continue", "आगे बढ़ने के लिए ग्राहक का नाम लिखें")
         cart.isEmpty() -> tr("Add at least one cloth to continue", "आगे बढ़ने के लिए कम से कम एक कपड़ा जोड़ें")
+        !validCart && hasBelowCostPrice -> tr("A unit price cannot be below cost. Use Sell at cost price to charge cost.", "यूनिट कीमत लागत से कम नहीं हो सकती। लागत पर बेचने के लिए लागत वाला विकल्प चुनें।")
         !validCart -> tr("Check each quantity and enter weight/length where needed", "मात्रा जाँचें और जहाँ ज़रूरी हो वज़न/लंबाई लिखें")
         !orderMode && !validDiscount -> tr("Enter a valid discount", "सही छूट दर्ज करें")
         !orderMode && !validCreditAmount -> tr("Enter a valid amount received", "मिली हुई सही राशि दर्ज करें")
@@ -312,11 +318,16 @@ fun BillScreen(
             keyboard?.show()
         }
     }
-    LaunchedEffect(editingPriceSku) {
+    LaunchedEffect(editingPriceSku, sellAtCostDraft) {
         if (editingPriceSku != null) {
-            delay(180)
-            priceDialogFocusRequester.requestFocus()
-            keyboard?.show()
+            if (sellAtCostDraft) {
+                keyboard?.hide()
+                focusManager.clearFocus()
+            } else {
+                delay(180)
+                priceDialogFocusRequester.requestFocus()
+                keyboard?.show()
+            }
         }
     }
     LaunchedEffect(customerExists, customerSearching, customerPhone, customerMatches.size) {
@@ -508,6 +519,8 @@ fun BillScreen(
                                         Surface(
                                             modifier = Modifier.width(91.dp).then(
                                                 if (!orderMode) Modifier.clickable {
+                                                    sellAtCostDraft = line.sellAtCost
+                                                    manualPriceDraft = if (line.sellAtCost) line.product.price.toString() else line.unitPrice.toString()
                                                     priceDraft = line.unitPrice.toString()
                                                     editingPriceSku = line.product.sku
                                                 } else Modifier
@@ -759,6 +772,7 @@ fun BillScreen(
     }
     if (editingPriceSku != null && editingPriceLine != null) {
         val editedUnitPrice = priceDraft.toIntOrNull()
+        val belowCost = editedUnitPrice != null && editedUnitPrice < editingPriceLine.product.costPrice
         val editedLineTotal = editedUnitPrice?.let { price ->
             if (editingPriceLine.product.pricingUnit.isNotBlank()) lineAmount(price, editingPriceLine.measureQuantity ?: 0.0)
             else lineAmount(price, editingPriceLine.quantity)
@@ -773,16 +787,47 @@ fun BillScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(editingPriceLine.product.name, color = Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(tr("Sell at cost price", "लागत कीमत पर बेचें"), color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (editingPriceLine.product.costPrice > 0) tr("Sets price to ₹${editingPriceLine.product.costPrice} exactly", "कीमत ठीक ₹${editingPriceLine.product.costPrice} कर देगा")
+                                else tr("Cost price is not set for this cloth", "इस कपड़े की लागत कीमत दर्ज नहीं है"),
+                                color = Muted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Switch(
+                            checked = sellAtCostDraft,
+                            enabled = editingPriceLine.product.costPrice > 0,
+                            onCheckedChange = { enabled ->
+                                sellAtCostDraft = enabled
+                                priceDraft = if (enabled) editingPriceLine.product.costPrice.toString() else manualPriceDraft
+                            }
+                        )
+                    }
                     OutlinedTextField(
                         value = priceDraft,
-                        onValueChange = { value -> priceDraft = value.filter { it.isDigit() } },
+                        onValueChange = { value ->
+                            if (!sellAtCostDraft) {
+                                manualPriceDraft = value.filter { it.isDigit() }
+                                priceDraft = manualPriceDraft
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth().focusRequester(priceDialogFocusRequester),
                         placeholder = { Text(tr("Enter unit price (₹)", "यूनिट कीमत लिखें (₹)"), color = Muted) },
+                        enabled = !sellAtCostDraft,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 20.sp),
                         shape = RoundedCornerShape(14.dp)
                     )
+                    if (belowCost) {
+                        Text(
+                            tr("Price cannot be below cost (₹${editingPriceLine.product.costPrice}).", "कीमत लागत (₹${editingPriceLine.product.costPrice}) से कम नहीं हो सकती।"),
+                            color = Color(0xFFB3261E), fontSize = 13.sp, fontWeight = FontWeight.SemiBold
+                        )
+                    }
                     if (editedLineTotal != null && editedLineTotal > 0) {
                         Text(tr("Final item price: ₹$editedLineTotal", "सामान की अंतिम कीमत: ₹$editedLineTotal"), color = Teal, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
@@ -791,12 +836,13 @@ fun BillScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        editedUnitPrice?.let { onSetUnitPrice(editingPriceLine.product.sku, it) }
+                        editedUnitPrice?.let { onSetUnitPrice(editingPriceLine.product.sku, it, sellAtCostDraft) }
                         editingPriceSku = null
                         keyboard?.hide()
                         focusManager.clearFocus()
                     },
-                    enabled = editedUnitPrice != null && editedUnitPrice > 0
+                    enabled = editedUnitPrice != null && editedUnitPrice > 0 && editedUnitPrice >= editingPriceLine.product.costPrice &&
+                        (!sellAtCostDraft || editedUnitPrice == editingPriceLine.product.costPrice)
                 ) { Text(tr("Update price", "कीमत बदलें")) }
             },
             dismissButton = {
