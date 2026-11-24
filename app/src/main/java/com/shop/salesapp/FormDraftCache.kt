@@ -95,23 +95,22 @@ internal object OrderFormDraftCache {
         val rows = JSONArray()
         draft.items.forEach { line ->
             val product = line.product
-            rows.put(
-                JSONObject()
-                    .put("sku", product.sku)
-                    .put("name", product.name)
-                    .put("category", product.category)
-                    .put("price", product.price)
-                    .put("stock", product.stock)
-                    .put("imageId", product.imageId)
-                    .put("available", product.available)
-                    .put("fractionalQuantity", product.fractionalQuantity)
-                    .put("unit", product.unit)
-                    .put("pricingUnit", product.pricingUnit)
-                    .put("sizeVariant", product.sizeVariant)
-                    .put("dateAdded", product.dateAdded)
-                    .put("quantity", line.quantity)
-                    .put("measureQuantity", line.measureQuantity)
-            )
+            val row = JSONObject()
+                .put("sku", product.sku)
+                .put("name", product.name)
+                .put("category", product.category)
+                .put("price", product.price)
+                .put("stock", product.stock)
+                .put("imageId", product.imageId)
+                .put("available", product.available)
+                .put("fractionalQuantity", product.fractionalQuantity)
+                .put("unit", product.unit)
+                .put("pricingUnit", product.pricingUnit)
+                .put("sizeVariant", product.sizeVariant)
+                .put("dateAdded", product.dateAdded)
+                .put("quantity", line.quantity)
+                .put("measureQuantity", line.measureQuantity)
+            rows.put(row)
         }
         val root = JSONObject()
             .put("customerName", draft.customerName)
@@ -213,7 +212,8 @@ internal object BillFormDraftCache {
                         quantity = row.optDouble("quantity", 0.0),
                         measureQuantity = row.optDouble("measureQuantity").takeIf { row.has("measureQuantity") },
                         unitPrice = row.optInt("unitPrice", product.price),
-                        sellAtCost = row.optBoolean("sellAtCost", false)
+                        sellAtCost = row.optBoolean("sellAtCost", false),
+                        unitPriceBeforeCost = row.optInt("unitPriceBeforeCost", product.price).takeIf { row.has("unitPriceBeforeCost") }
                     )
                 }
             }
@@ -245,8 +245,7 @@ internal object BillFormDraftCache {
         val rows = JSONArray()
         draft.items.forEach { line ->
             val product = line.product
-            rows.put(
-                JSONObject()
+            val row = JSONObject()
                     .put("sku", product.sku)
                     .put("name", product.name)
                     .put("category", product.category)
@@ -264,7 +263,8 @@ internal object BillFormDraftCache {
                     .put("measureQuantity", line.measureQuantity)
                     .put("unitPrice", line.unitPrice)
                     .put("sellAtCost", line.sellAtCost)
-            )
+            line.unitPriceBeforeCost?.let { row.put("unitPriceBeforeCost", it) }
+            rows.put(row)
         }
         val root = JSONObject()
             .put("customerName", draft.customerName)

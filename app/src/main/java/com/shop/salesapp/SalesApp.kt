@@ -429,6 +429,21 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         )
     }
 
+    fun cartLineForAddedProduct(product: Product, quantity: Double): CartLine {
+        val applyBillWideCost = !orderMode && cart.isNotEmpty() && cart.all { it.sellAtCost } && product.costPrice > 0
+        return if (applyBillWideCost) {
+            CartLine(
+                product = product,
+                quantity = quantity,
+                unitPrice = product.costPrice,
+                sellAtCost = true,
+                unitPriceBeforeCost = product.price
+            )
+        } else {
+            CartLine(product, quantity)
+        }
+    }
+
     fun persistCurrentDraft() {
         when (screen) {
             Screen.PlaceOrder -> saveOrderDraft()
@@ -1714,7 +1729,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         val index = cart.indexOfFirst { it.product.sku == product.sku }
                         val step = if (product.fractionalQuantity) 0.1 else 1.0
                         if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
-                        else cart.add(CartLine(product, if (orderMode) step else minOf(step, product.stock)))
+                        else cart.add(cartLineForAddedProduct(product, if (orderMode) step else minOf(step, product.stock)))
                         if (!orderMode) billShouldScrollToDiscount = true
                         if (orderMode) {
                             navigateBack()
@@ -1890,7 +1905,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                         val index = cart.indexOfFirst { it.product.sku == cached.sku }
                                         val step = if (cached.fractionalQuantity) 0.1 else 1.0
                                         if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(cached.stock), measureQuantity = if (cached.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
-                                        else cart.add(CartLine(cached, if (orderMode) step else minOf(step, cached.stock)))
+                                        else cart.add(cartLineForAddedProduct(cached, if (orderMode) step else minOf(step, cached.stock)))
                                         query = scannedCode
                                     }
                                 } else if (token != null && api.isConfigured) {
@@ -1909,14 +1924,14 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                                     val index = cart.indexOfFirst { it.product.sku == product.sku }
                                                     val step = if (product.fractionalQuantity) 0.1 else 1.0
                                                     if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
-                                                    else cart.add(CartLine(product, if (orderMode) step else minOf(step, product.stock)))
+                                                    else cart.add(cartLineForAddedProduct(product, if (orderMode) step else minOf(step, product.stock)))
                                                 }
                                             }
                                             .onFailure { message = it.message ?: "Could not look up this cloth." }
                                     }
                                 } else {
                                     val product = previewProducts.firstOrNull { it.sku == scannedCode }
-                                    if (product != null) cart.add(CartLine(product, if (orderMode) 1.0 else minOf(1.0, product.stock)))
+                                    if (product != null) cart.add(cartLineForAddedProduct(product, if (orderMode) 1.0 else minOf(1.0, product.stock)))
                                     else message = "Cloth not found in preview catalog. Search by name or code."
                                 }
                         }
@@ -1951,7 +1966,37 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         if (index >= 0 && price > 0 && price >= cart[index].product.costPrice &&
                             (!sellAtCost || price == cart[index].product.costPrice)
                         ) {
-                            cart[index] = cart[index].copy(unitPrice = price, sellAtCost = sellAtCost)
+                            val line = cart[index]
+                            cart[index] = line.copy(
+                                unitPrice = price,
+                                sellAtCost = sellAtCost,
+                                unitPriceBeforeCost = if (sellAtCost) line.unitPriceBeforeCost ?: line.unitPrice else null
+                            )
+                        }
+                    },
+                    onSellAllAtCost = { enabled ->
+                        if (enabled && cart.all { it.product.costPrice > 0 }) {
+                            billDiscountEnabled = false
+                            billDiscountValue = ""
+                            for (index in cart.indices) {
+                                val line = cart[index]
+                                cart[index] = line.copy(
+                                    unitPrice = line.product.costPrice,
+                                    sellAtCost = true,
+                                    unitPriceBeforeCost = if (line.sellAtCost) line.unitPriceBeforeCost ?: line.unitPrice else line.unitPrice
+                                )
+                            }
+                        } else if (!enabled) {
+                            for (index in cart.indices) {
+                                val line = cart[index]
+                                if (line.sellAtCost) {
+                                    cart[index] = line.copy(
+                                        unitPrice = line.unitPriceBeforeCost ?: line.product.price,
+                                        sellAtCost = false,
+                                        unitPriceBeforeCost = null
+                                    )
+                                }
+                            }
                         }
                     },
                     onSave = {
@@ -1973,7 +2018,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
                                         val subtotal = invoiceItems.sumOf { cartLineAmount(it) }
-                                        val discountInput = billDiscountValue.toDoubleOrNull() ?: 0.0
+                                        val allItemsAtCost = invoiceItems.isNotEmpty() && invoiceItems.all { it.sellAtCost }
+                                        val discountInput = if (allItemsAtCost) 0.0 else billDiscountValue.toDoubleOrNull() ?: 0.0
                                         val discountAmount = discountInput.roundToInt()
                                         val total = subtotal - discountAmount
                                         val amountReceived = if (invoicePayment == "Credit") invoiceCreditAmount else total

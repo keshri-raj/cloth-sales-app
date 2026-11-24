@@ -119,6 +119,7 @@ fun AddProductScreen(
     val priceBringIntoView = remember { BringIntoViewRequester() }
     val costBringIntoView = remember { BringIntoViewRequester() }
     val stockBringIntoView = remember { BringIntoViewRequester() }
+    val sizeBringIntoView = remember { BringIntoViewRequester() }
     val focusScope = androidx.compose.runtime.rememberCoroutineScope()
     val parsedStock = stock.toDoubleOrNull()
     val stockPrecisionValid = parsedStock != null && kotlin.math.abs(parsedStock * 1000 - (parsedStock * 1000).roundToInt()) < 0.001
@@ -152,7 +153,7 @@ fun AddProductScreen(
                 OutlinedTextField(
                     name, onName,
                     Modifier.fillMaxWidth().bringIntoViewRequester(nameBringIntoView).onFocusChanged {
-                        if (it.isFocused) focusScope.launch { delay(220); nameBringIntoView.bringIntoView() }
+                        if (it.isFocused) focusScope.launch { delay(320); nameBringIntoView.bringIntoView(); delay(120); nameBringIntoView.bringIntoView() }
                     },
                     label = { Text(tr("Cloth name", "कपड़े का नाम"), maxLines = 1) },
                     singleLine = true,
@@ -165,7 +166,9 @@ fun AddProductScreen(
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
                 OutlinedTextField(
                     sizeVariant, { onSizeVariant(it.take(80)) },
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().bringIntoViewRequester(sizeBringIntoView).onFocusChanged {
+                        if (it.isFocused) focusScope.launch { delay(320); sizeBringIntoView.bringIntoView(); delay(120); sizeBringIntoView.bringIntoView() }
+                    },
                     label = { Text(tr("Size / variant (optional)", "साइज़ / वेरिएंट (वैकल्पिक)"), maxLines = 1) },
                     placeholder = { Text(tr("e.g. Size L, Maroon, Design 20", "जैसे साइज़ L, मरून, डिज़ाइन 20"), maxLines = 1) },
                     singleLine = true,
@@ -176,7 +179,7 @@ fun AddProductScreen(
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
                 OutlinedButton(
-                    onClick = { categorySearch = ""; categoryPickerOpen = true },
+                    onClick = { keyboard?.hide(); focusManager.clearFocus(); categorySearch = ""; categoryPickerOpen = true },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp)
@@ -217,7 +220,7 @@ fun AddProductScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         stock, onStock, Modifier.weight(0.9f).focusRequester(stockFocus).bringIntoViewRequester(stockBringIntoView).onFocusChanged {
-                            if (it.isFocused) focusScope.launch { delay(220); stockBringIntoView.bringIntoView() }
+                            if (it.isFocused) focusScope.launch { delay(320); stockBringIntoView.bringIntoView(); delay(120); stockBringIntoView.bringIntoView() }
                         },
                         label = { Text(tr("Stock (${unitShort(unit)})", "स्टॉक (${unitHindi(unit)})"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
@@ -237,7 +240,7 @@ fun AddProductScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         cost, onCost, Modifier.weight(1f).focusRequester(costFocus).bringIntoViewRequester(costBringIntoView).onFocusChanged {
-                            if (it.isFocused) focusScope.launch { delay(220); costBringIntoView.bringIntoView() }
+                            if (it.isFocused) focusScope.launch { delay(320); costBringIntoView.bringIntoView(); delay(120); costBringIntoView.bringIntoView() }
                         },
                         label = { Text(if (pricingUnit.isNotBlank()) tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹") else tr("Cost / ${unitShort(unit)} ₹", "लागत / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
@@ -247,7 +250,7 @@ fun AddProductScreen(
                     )
                     OutlinedTextField(
                         price, onPrice, Modifier.weight(1f).focusRequester(priceFocus).bringIntoViewRequester(priceBringIntoView).onFocusChanged {
-                            if (it.isFocused) focusScope.launch { delay(220); priceBringIntoView.bringIntoView() }
+                            if (it.isFocused) focusScope.launch { delay(320); priceBringIntoView.bringIntoView(); delay(120); priceBringIntoView.bringIntoView() }
                         },
                         label = { Text(if (pricingUnit.isNotBlank()) tr("Selling price / ${unitShort(pricingUnit)} ₹", "विक्रय मूल्य / ${unitHindi(pricingUnit)} ₹") else tr("Selling price / ${unitShort(unit)} ₹", "विक्रय मूल्य / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
@@ -298,7 +301,7 @@ fun AddProductScreen(
                         label = { Text(tr("Search categories", "श्रेणी खोजें")) },
                         shape = RoundedCornerShape(14.dp)
                     )
-                    LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                    LazyColumn(Modifier.heightIn(max = (screenHeightDp * 0.42f).coerceAtLeast(180f).dp)) {
                         items(filteredCategories) { option ->
                             TextButton(
                                 onClick = { onCategory(option); categoryPickerOpen = false },
