@@ -147,7 +147,7 @@ fun SearchScreen(
                     DetailLine(tr("Cloth ID", "कपड़े की आईडी"), product.sku)
                     DetailLine(
                         tr("Price", "कीमत"),
-                        "₹${product.price} ${tr(unitPriceEnglish(product.pricingUnit.ifBlank { product.quantityUnit() }), unitPriceHindi(product.pricingUnit.ifBlank { product.quantityUnit() }))}"
+                        "₹${product.price} ${tr(unitPriceEnglish(product.quantityUnit()), unitPriceHindi(product.quantityUnit()))}"
                     )
                     DetailLine(
                         tr("Stock left", "बाकी स्टॉक"),
@@ -224,7 +224,7 @@ fun BillSearchProductCard(
                 if (product.sizeVariant.isNotBlank()) Text(product.sizeVariant, fontSize = 12.sp, color = Muted, maxLines = 1)
                 Text(tr("ID", "आईडी") + ": ${product.sku}", fontSize = 13.sp, color = Muted, maxLines = 1)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("₹${product.price}${if (product.pricingUnit.isNotBlank()) "/${unitShort(product.pricingUnit)}" else ""}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
+                    Text("₹${product.price}${if (product.quantityUnit() != "PIECE") "/${unitShort(product.quantityUnit())}" else ""}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
                     Spacer(Modifier.width(7.dp))
                     Box(Modifier.width(1.dp).height(25.dp).background(Color(0xFFCCD2D8)))
                     Spacer(Modifier.width(7.dp))
@@ -280,7 +280,7 @@ fun ProductCard(product: Product, live: Boolean, orderMode: Boolean, onAdd: () -
                     Spacer(Modifier.height(4.dp))
                     Text("${product.sku} · ${product.category}", fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(10.dp))
-                    Text("₹${product.price}${if (product.pricingUnit.isNotBlank()) "/${unitShort(product.pricingUnit)}" else ""}", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Teal)
+                    Text("₹${product.price}${if (product.quantityUnit() != "PIECE") "/${unitShort(product.quantityUnit())}" else ""}", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Teal)
                     val stockText = "${formatQuantity(product.stock)}${if (product.quantityUnit() == "PIECE") "" else " ${unitShort(product.quantityUnit())}"}"
                     Text(if (product.stock <= 0) tr("Out of stock", "स्टॉक में नहीं") else if (live) tr("$stockText in stock", "$stockText स्टॉक में") else "$stockText in stock · preview", fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(10.dp))

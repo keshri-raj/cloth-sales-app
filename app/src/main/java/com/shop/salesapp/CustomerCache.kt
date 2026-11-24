@@ -107,6 +107,19 @@ object CustomerCache {
         return merged.values.filter { normalizePhone(it.phone).isNotBlank() }
     }
 
+    /** Replaces the possibly stale local index with the server snapshot and unsynced local additions. */
+    fun fromServerSnapshot(serverCustomers: List<ShopCustomer>, pending: List<PendingCustomer>): List<ShopCustomer> {
+        val pendingCustomers = pending.map {
+            ShopCustomer(
+                id = "LOCAL-${normalizePhone(it.phone)}",
+                name = it.name,
+                phone = it.phone,
+                email = it.email
+            )
+        }
+        return merge(serverCustomers, pendingCustomers)
+    }
+
     fun normalizePhone(phone: String): String {
         val digits = phone.filter(Char::isDigit)
         return if (digits.length == 12 && digits.startsWith("91")) digits.takeLast(10) else digits

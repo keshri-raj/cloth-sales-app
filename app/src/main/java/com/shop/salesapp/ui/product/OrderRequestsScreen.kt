@@ -216,7 +216,7 @@ private fun roughRequestEstimate(request: CustomerOrderRequest, products: List<P
     var hasFixedPrice = false
     items.forEach { item ->
         val product = products.firstOrNull { it.sku == item.sku }
-        if (product != null && product.pricingUnit.isBlank()) {
+        if (product != null) {
             estimate += product.price * item.quantity
             hasFixedPrice = true
         }

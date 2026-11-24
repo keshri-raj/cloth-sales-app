@@ -1370,7 +1370,8 @@ function createProduct_(config, payload) {
   const unitCost = Number(payload.unitCost || 0);
   const stock = Number(payload.openingStock);
   const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
-  const pricingUnit = unit === 'PIECE' ? normalizedPricingUnit_(payload.pricingUnit) : '';
+  // Price is always per selected stock unit (piece, metre, or kg).
+  const pricingUnit = '';
   const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
   if (!name || name.length > 120 || sizeVariant.length > 80 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isFinite(stock) || stock < 0 || stock > 100000 || (!fractionalQuantity && !Number.isInteger(stock)) || (fractionalQuantity && Math.abs(stock * 1000 - Math.round(stock * 1000)) > 0.000001)) {
     throw apiError_('Enter a product name, valid prices, and a valid opening quantity.', 400);
@@ -1460,7 +1461,8 @@ function createInvoice_(config, payload, userEmail) {
     const quantity = Number(item.quantity);
     const fractionalAllowed = fractionalQuantityEnabled_(product['Fractional Quantity']);
     const unit = productUnit_(product);
-    const pricingUnit = unit === 'PIECE' ? normalizedPricingUnit_(product['Pricing Unit']) : '';
+    // Bill quantity is the sold unit and is also the quantity used for pricing.
+    const pricingUnit = '';
     if (!Number.isFinite(quantity) || quantity < 0.001 || (!fractionalAllowed && !Number.isInteger(quantity)) || (fractionalAllowed && Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 0.000001)) {
       throw apiError_((fractionalAllowed ? 'Enter a valid quantity with up to three decimal places for ' : 'Enter a whole-number quantity for ') + product['Product Name'] + '.', 400);
     }
@@ -1482,11 +1484,8 @@ function createInvoice_(config, payload, userEmail) {
       throw apiError_('Unit price cannot be below cost for ' + product['Product Name'] + '. Use the cost-price option to sell at cost.', 400);
     }
     const discount = Number(item.discount || 0);
-    const measureQuantity = pricingUnit ? Number(item.measureQuantity) : quantity;
-    if (pricingUnit && (!Number.isFinite(measureQuantity) || measureQuantity < 0.001 || measureQuantity > 100000 || Math.abs(measureQuantity * 1000 - Math.round(measureQuantity * 1000)) > 0.000001)) {
-      throw apiError_('Enter the total weight or length for ' + product['Product Name'] + ' (up to three decimal places).', 400);
-    }
-    const pricedQuantity = pricingUnit ? measureQuantity : quantity;
+    const measureQuantity = 0;
+    const pricedQuantity = quantity;
     if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * pricedQuantity) throw apiError_('Discount must be between zero and the item total.', 400);
     return {
       sku: String(product.SKU), name: String(product['Product Name']), category: String(product.Category || ''),
@@ -1528,7 +1527,7 @@ function createInvoice_(config, payload, userEmail) {
   }
   const total = subtotal - billDiscount;
   if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
-  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + (line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitCost; }, 0);
+  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + line.quantity * line.unitCost; }, 0);
   if (total + 0.000001 < combinedCost) {
     throw apiError_('Discount is too high. The bill total cannot be below the combined purchase cost of the items.', 400);
   }

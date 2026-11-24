@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Contacts
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Remove
@@ -133,9 +134,9 @@ fun CartQuantityControl(
             val next = (line.quantity - step).coerceAtLeast(0.0)
             quantityText = formatQuantity(next)
             onChange(line.product.sku, -step)
-        }, modifier = if (compact) Modifier.size(32.dp) else Modifier) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
+        }, modifier = if (compact) Modifier.size(26.dp) else Modifier) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ"), modifier = Modifier.size(if (compact) 16.dp else 24.dp)) }
         Surface(
-            modifier = Modifier.width(if (compact) 56.dp else 82.dp).clickable {
+            modifier = Modifier.width(if (compact) 44.dp else 82.dp).clickable {
                 val initial = formatQuantity(line.quantity)
                 quantityDraft = TextFieldValue(initial, selection = TextRange(initial.length))
                 showQuantityEditor = true
@@ -144,15 +145,15 @@ fun CartQuantityControl(
             color = Color.Transparent,
             border = BorderStroke(1.dp, Color(0xFFD5DDE9))
         ) {
-            Box(Modifier.padding(horizontal = if (compact) 4.dp else 8.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-                Text(quantityText, fontSize = if (compact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Box(Modifier.padding(horizontal = if (compact) 2.dp else 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                Text(quantityText, fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
         IconButton(onClick = {
             val next = if (stockLimit) minOf(line.product.stock, line.quantity + step) else line.quantity + step
             quantityText = formatQuantity(next)
             onChange(line.product.sku, step)
-        }, modifier = if (compact) Modifier.size(32.dp) else Modifier) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
+        }, modifier = if (compact) Modifier.size(26.dp) else Modifier) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ"), modifier = Modifier.size(if (compact) 16.dp else 24.dp)) }
     }
     if (showQuantityEditor) {
         LaunchedEffect(line.product.sku) {
@@ -243,7 +244,7 @@ fun BillScreen(
     imageLoader: suspend (String) -> ByteArray?,
     onQuantity: (String, Double) -> Unit,
     onSetQuantity: (String, Double) -> Unit,
-    onSetMeasureQuantity: (String, Double?) -> Unit,
+    onRemoveCartItem: (String) -> Unit,
     onSetUnitPrice: (String, Int, Boolean) -> Unit,
     onSellAllAtCost: (Boolean) -> Unit,
     onSave: () -> Unit,
@@ -263,6 +264,10 @@ fun BillScreen(
     var promptedCustomerPhone by remember { mutableStateOf("") }
     var showClearConfirmation by remember { mutableStateOf(false) }
     val subtotal = cart.sumOf { cartLineAmount(it) }
+    val costSubtotal = cart.sumOf { line ->
+        lineAmount(line.product.costPrice, line.quantity)
+    }
+    val maxDiscount = (subtotal - costSubtotal).coerceAtLeast(0)
     val editingPriceLine = cart.firstOrNull { it.product.sku == editingPriceSku }
     val billWideAtCost = cart.isNotEmpty() && cart.all { it.sellAtCost }
     val canSellAllAtCost = cart.isNotEmpty() && cart.all { it.product.costPrice > 0 }
@@ -270,9 +275,13 @@ fun BillScreen(
     val parsedDiscount = discountValue.toDoubleOrNull() ?: 0.0
     val discountAmount = if (billWideAtCost) 0 else parsedDiscount.roundToInt()
     val total = subtotal - discountAmount
-    val validDiscount = billWideAtCost || !discountEnabled || (discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 && discountAmount <= subtotal && total > 0)
+    val validDiscount = billWideAtCost || !discountEnabled || (
+        cart.isNotEmpty() && discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 &&
+            discountAmount <= maxDiscount && total >= costSubtotal
+        )
+    val canApplyDiscount = cart.isNotEmpty() && !billWideAtCost && maxDiscount > 0
     val validCartQuantityAndPrice = cart.all {
-        validCartQuantity(it, enforceStock = !orderMode, requirePriceMeasure = !orderMode) && it.unitPrice > 0 &&
+        validCartQuantity(it, enforceStock = !orderMode) && it.unitPrice > 0 &&
             (orderMode || (it.unitPrice >= it.product.costPrice && (!it.sellAtCost || it.unitPrice == it.product.costPrice)))
     }
     val validCart = cart.isNotEmpty() && validCartQuantityAndPrice
@@ -512,12 +521,11 @@ fun BillScreen(
                         Divider(color = Color(0xFFDDE5E4))
                         cart.forEachIndexed { index, line ->
                             key(line.product.sku) {
-                                val measureQuantityBringIntoViewRequester = remember { BringIntoViewRequester() }
                                 if (index > 0) Divider(color = Color(0xFFE8EBF0))
                                 Row(
                                 Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
                                 BillClothThumbnail(
                                     line.product,
@@ -525,7 +533,7 @@ fun BillScreen(
                                     Modifier.weight(1f).aspectRatio(1f).clickable { selectedProductDetails = line.product }
                                 )
                                 Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    val priceUnit = if (line.product.pricingUnit.isNotBlank()) line.product.pricingUnit else line.product.quantityUnit()
+                                    val priceUnit = line.product.quantityUnit()
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text(
@@ -546,7 +554,7 @@ fun BillScreen(
                                             )
                                         }
                                         Surface(
-                                            modifier = Modifier.width(91.dp).then(
+                                            modifier = Modifier.width(76.dp).then(
                                                 if (!orderMode) Modifier.clickable {
                                                     sellAtCostDraft = line.sellAtCost
                                                     manualPriceDraft = (
@@ -562,19 +570,36 @@ fun BillScreen(
                                             border = BorderStroke(1.dp, Color(0xFFD5DDE9))
                                         ) {
                                             Column(Modifier.padding(horizontal = 6.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Text(tr("Price / unit", "एक यूनिट की कीमत"), color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(tr("Price / unit", "एक यूनिट की कीमत"), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 Text(
                                                     "₹${line.unitPrice}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}",
                                                     color = Ink,
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 16.sp,
+                                                    fontSize = 15.sp,
                                                     maxLines = 1
                                                 )
                                             }
                                         }
+                                        IconButton(
+                                            onClick = { onRemoveCartItem(line.product.sku) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.DeleteOutline,
+                                                contentDescription = tr("Remove item", "सामान हटाएँ"),
+                                                tint = Color(0xFFB3261E),
+                                                modifier = Modifier.size(51.dp)
+                                            )
+                                        }
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(tr("Qty", "मात्रा"), color = Muted, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            tr("Qty (${unitShort(line.product.quantityUnit())})", "मात्रा (${unitHindi(line.product.quantityUnit())})"),
+                                            color = Muted,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1
+                                        )
                                         Spacer(Modifier.width(6.dp))
                                         Surface(
                                             shape = RoundedCornerShape(13.dp),
@@ -586,33 +611,8 @@ fun BillScreen(
                                         Spacer(Modifier.weight(1f))
                                         Column(horizontalAlignment = Alignment.End) {
                                             Text(tr("Final price", "अंतिम कीमत"), color = Muted, fontSize = 12.sp, maxLines = 1)
-                                            Text("₹${cartLineAmount(line)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text("₹${cartLineAmount(line)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, softWrap = false)
                                         }
-                                    }
-                                    if (line.product.pricingUnit.isNotBlank() && !orderMode) {
-                                        OutlinedTextField(
-                                            value = line.measureQuantity?.let(::formatQuantity).orEmpty(),
-                                            onValueChange = { value ->
-                                                val filtered = value.filter { it.isDigit() || it == '.' }.let { text -> if (text.count { it == '.' } <= 1) text else line.measureQuantity?.let(::formatQuantity).orEmpty() }
-                                                onSetMeasureQuantity(line.product.sku, filtered.toDoubleOrNull())
-                                            },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .bringIntoViewRequester(measureQuantityBringIntoViewRequester)
-                                                .onFocusChanged { focusState ->
-                                                    if (focusState.isFocused) screenScope.launch {
-                                                        delay(200)
-                                                        billListState.animateScrollToItem(2)
-                                                        delay(100)
-                                                        measureQuantityBringIntoViewRequester.bringIntoView()
-                                                        keyboard?.show()
-                                                    }
-                                                },
-                                            label = { Text(tr("Total ${unitEnglish(line.product.pricingUnit)} sold", "कुल ${unitHindi(line.product.pricingUnit)}")) },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            shape = RoundedCornerShape(11.dp)
-                                        )
                                     }
                                 }
                                 }
@@ -620,14 +620,13 @@ fun BillScreen(
                         }
                     }
                     Surface(
-                        modifier = Modifier.align(Alignment.End).size(86.dp).clickable(onClick = onFindProduct),
+                        modifier = Modifier.align(Alignment.End).size(50.dp).clickable(onClick = onFindProduct),
                         shape = CircleShape,
                         color = Color.White,
-                        border = BorderStroke(1.5.dp, Teal)
+                        border = BorderStroke(2.dp, Teal)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, tint = Teal, modifier = Modifier.size(21.dp))
-                            //Text(tr("Add more items", "और सामान जोड़ें"), color = Teal, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("+", color = Teal, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 40.sp)
                         }
                     }
                 }
@@ -654,7 +653,7 @@ fun BillScreen(
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            if (discountEnabled && !billWideAtCost) {
+                            if (discountEnabled && canApplyDiscount) {
                                 TextButton(
                                     onClick = {
                                         discountDraft = discountValue
@@ -664,13 +663,13 @@ fun BillScreen(
                                 ) { Text(tr("Edit", "बदलें"), color = Teal, fontSize = 13.sp) }
                             }
                             Switch(
-                                checked = discountEnabled && !billWideAtCost,
-                                enabled = !billWideAtCost,
+                                checked = discountEnabled,
+                                enabled = canApplyDiscount || discountEnabled,
                                 onCheckedChange = { enabled ->
-                                    if (enabled) {
+                                    if (enabled && canApplyDiscount) {
                                         discountDraft = discountValue
                                         showDiscountDialog = true
-                                    } else {
+                                    } else if (!enabled) {
                                         onDiscountEnabled(false)
                                     }
                                 }
@@ -705,7 +704,12 @@ fun BillScreen(
                         }
                     }
                 }
-                if (!validDiscount) Text(tr("Enter a valid discount below the total amount.", "कुल राशि से कम सही छूट दर्ज करें।"), color = Color(0xFFB42318), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                if (!validDiscount) Text(
+                    tr("Discount cannot exceed ₹$maxDiscount or reduce the bill below cost.", "छूट ₹$maxDiscount से अधिक नहीं हो सकती और बिल लागत से कम नहीं होना चाहिए।"),
+                    color = Color(0xFFB42318),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
         if (!orderMode && paymentMode == "Credit") item(key = "bill.credit-details") {
@@ -826,8 +830,7 @@ fun BillScreen(
         val editedUnitPrice = priceDraft.toIntOrNull()
         val belowCost = editedUnitPrice != null && editedUnitPrice < editingPriceLine.product.costPrice
         val editedLineTotal = editedUnitPrice?.let { price ->
-            if (editingPriceLine.product.pricingUnit.isNotBlank()) lineAmount(price, editingPriceLine.measureQuantity ?: 0.0)
-            else lineAmount(price, editingPriceLine.quantity)
+            lineAmount(price, editingPriceLine.quantity)
         }
         AlertDialog(
             onDismissRequest = {
@@ -914,7 +917,8 @@ fun BillScreen(
     if (showDiscountDialog) {
         val draftAmount = discountDraft.toDoubleOrNull()?.roundToInt()
         val validDraft = discountDraft.toDoubleOrNull()?.let { amount ->
-            amount >= 0 && (subtotal == 0 || (draftAmount != null && draftAmount <= subtotal && subtotal - draftAmount > 0))
+            cart.isNotEmpty() && amount >= 0 && draftAmount != null &&
+                draftAmount <= maxDiscount && subtotal - draftAmount >= costSubtotal
         } == true
         AlertDialog(
             onDismissRequest = {
@@ -928,7 +932,14 @@ fun BillScreen(
                     Modifier.heightIn(max = dialogContentMaxHeight).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(tr("Enter the rupee amount to subtract from this bill.", "इस बिल से घटाने के लिए रुपये की राशि लिखें।"), color = Muted, fontSize = 14.sp)
+                    Text(
+                        tr(
+                            "Enter a discount up to ₹$maxDiscount. The bill total cannot go below cost price.",
+                            "₹$maxDiscount तक छूट लिखें। बिल का कुल लागत कीमत से कम नहीं हो सकता।"
+                        ),
+                        color = Muted,
+                        fontSize = 14.sp
+                    )
                     OutlinedTextField(
                         value = discountDraft,
                         onValueChange = { value ->
@@ -945,7 +956,7 @@ fun BillScreen(
                     if (draftAmount != null && draftAmount > 0) {
                         Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFFFF0E7)) {
                             Text(
-                                tr("Discount: − ₹$draftAmount · New total: ₹${(subtotal - draftAmount).coerceAtLeast(0)}", "छूट: − ₹$draftAmount · नया कुल: ₹${(subtotal - draftAmount).coerceAtLeast(0)}"),
+                                tr("Discount: − ₹$draftAmount · New total: ₹${(subtotal - draftAmount).coerceAtLeast(0)} · Cost: ₹$costSubtotal", "छूट: − ₹$draftAmount · नया कुल: ₹${(subtotal - draftAmount).coerceAtLeast(0)} · लागत: ₹$costSubtotal"),
                                 modifier = Modifier.fillMaxWidth().padding(10.dp),
                                 color = Color(0xFFB64B15),
                                 fontSize = 14.sp,
@@ -958,8 +969,10 @@ fun BillScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onDiscountValue(discountDraft)
-                        onDiscountEnabled(true)
+                        if (validDraft) {
+                            onDiscountValue(discountDraft)
+                            onDiscountEnabled(true)
+                        }
                         showDiscountDialog = false
                         keyboard?.hide()
                         focusManager.clearFocus()
@@ -1133,11 +1146,10 @@ fun BillScreen(
                     Divider(color = Color(0xFFDDE5E4))
                     DetailLine(tr("Cloth ID", "कपड़े की आईडी"), product.sku)
                     DetailLine(tr("Category", "श्रेणी"), product.category)
-                    val priceUnit = if (product.pricingUnit.isNotBlank()) product.pricingUnit else product.quantityUnit()
+                    val priceUnit = product.quantityUnit()
                     DetailLine(tr(unitPriceEnglish(priceUnit), unitPriceHindi(priceUnit)), "₹${product.price}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}")
                     DetailLine(tr("In this bill", "इस बिल में मात्रा"), formatQuantity(quantityInBill) + " ${tr(unitEnglish(product.quantityUnit()), unitHindi(product.quantityUnit()))}")
                     val selectedLine = cart.firstOrNull { it.product.sku == product.sku }
-                    if (product.pricingUnit.isNotBlank()) DetailLine(tr("Measured amount", "नापा हुआ कुल"), selectedLine?.measureQuantity?.let(::formatQuantity)?.let { "$it ${unitShort(product.pricingUnit)}" } ?: "—")
                     DetailLine(tr("Line total", "कुल कीमत"), "₹${selectedLine?.let(::cartLineAmount) ?: 0}")
                     DetailLine(tr("Available stock", "उपलब्ध स्टॉक"), formatQuantity(product.stock) + " ${tr(unitEnglish(product.quantityUnit()), unitHindi(product.quantityUnit()))}")
                 }

@@ -411,7 +411,7 @@ class ShopApiClient(baseUrl: String) {
     ): CreatedInvoice {
         val lineItems = JSONArray()
         items.forEach { line ->
-            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.measureQuantity ?: 0.0).put("unitPrice", line.unitPrice).put("sellAtCost", line.sellAtCost).put("discount", 0))
+            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.quantity).put("unitPrice", line.unitPrice).put("sellAtCost", line.sellAtCost).put("discount", 0))
         }
         val body = JSONObject()
             .put("customer", JSONObject().put("name", customerName).put("phone", customerPhone).put("email", customerEmail).put("address", customerAddress))

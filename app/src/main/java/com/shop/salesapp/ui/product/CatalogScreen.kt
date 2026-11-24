@@ -282,7 +282,7 @@ fun CatalogScreen(
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(product.name, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                            val priceUnit = if (product.pricingUnit.isNotBlank()) product.pricingUnit else product.quantityUnit()
+                            val priceUnit = product.quantityUnit()
                             Text("${product.sku} · ₹${product.price}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}", color = Muted, fontSize = 12.sp)
                         }
                         TextButton(onClick = { onAvailabilityChange(product, true) }) { Text(tr("Restore", "वापस लाएँ"), color = Teal) }
@@ -346,7 +346,7 @@ private fun CatalogProductRow(
     onShowQr: () -> Unit
 ) {
     val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
-    val priceUnit = if (product.pricingUnit.isNotBlank()) product.pricingUnit else product.quantityUnit()
+    val priceUnit = product.quantityUnit()
     val price = "₹${product.price}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}"
     val stockUnit = product.quantityUnit()
     val rowColor = if (selectionMode && selected) Color(0xFFFFF7E4) else Color.White

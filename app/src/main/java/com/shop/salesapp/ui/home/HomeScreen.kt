@@ -24,12 +24,14 @@ import androidx.compose.material.icons.rounded.AddShoppingCart
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import com.shop.salesapp.ui.theme.Muted
 import com.shop.salesapp.ui.theme.SoftGreen
 import com.shop.salesapp.ui.theme.Teal
 import com.shop.salesapp.ui.theme.tr
+import com.shop.salesapp.BuildConfig
 
 @Composable
 fun HomeScreen(
@@ -66,6 +69,7 @@ fun HomeScreen(
     onPlaceOrder: () -> Unit
 ) {
     var userMenuExpanded by remember { mutableStateOf(false) }
+    var showAppInfo by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp),
         contentPadding = PaddingValues(top = 14.dp, bottom = 24.dp),
@@ -112,6 +116,10 @@ fun HomeScreen(
                                 onClick = { userMenuExpanded = false; onSignIn() }
                             )
                         }
+                        DropdownMenuItem(
+                            text = { Text(if (isHindi) "ऐप की जानकारी" else "App info") },
+                            onClick = { userMenuExpanded = false; showAppInfo = true }
+                        )
                     }
                 }
                 Spacer(Modifier.width(12.dp))
@@ -209,6 +217,28 @@ fun HomeScreen(
                 compact = true
             )
         }
+    }
+    if (showAppInfo) {
+        AlertDialog(
+            onDismissRequest = { showAppInfo = false },
+            title = { Text(if (isHindi) "ऐप की जानकारी" else "App info", color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Avani Suto", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isHindi) "ऐप संस्करण ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+                        else "App version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        color = Muted,
+                        fontSize = 15.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAppInfo = false }) {
+                    Text(if (isHindi) "बंद करें" else "Close", color = Teal)
+                }
+            }
+        )
     }
 }
 

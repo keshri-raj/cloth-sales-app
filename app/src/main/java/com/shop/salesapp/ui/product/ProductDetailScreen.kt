@@ -129,7 +129,7 @@ fun ProductDetailScreen(
                 Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
                     Column(Modifier.padding(12.dp)) {
                         Text(tr("Price", "कीमत"), color = Muted, fontSize = 14.sp)
-                        val priceUnit = if (product.pricingUnit.isNotBlank()) product.pricingUnit else product.quantityUnit()
+                        val priceUnit = product.quantityUnit()
                         Text("₹${product.price}${if (priceUnit != "PIECE") "/${unitShort(priceUnit)}" else ""}", color = Teal, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -322,7 +322,7 @@ fun EditClothDialog(
                     price,
                     { price = it.filter(Char::isDigit) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text(if (product.pricingUnit.isNotBlank()) tr("Rate / ${unitShort(product.pricingUnit)} (₹)", "दर / ${unitHindi(product.pricingUnit)} (₹)") else tr("Selling price (₹)", "बिक्री कीमत (₹)")) },
+                    label = { Text(if (product.quantityUnit() == "PIECE") tr("Selling price (₹)", "बिक्री कीमत (₹)") else tr("Selling price / ${unitShort(product.quantityUnit())} (₹)", "बिक्री कीमत / ${unitHindi(product.quantityUnit())} (₹)")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )

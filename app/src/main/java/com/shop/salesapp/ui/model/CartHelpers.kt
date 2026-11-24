@@ -11,18 +11,11 @@ fun formatQuantity(quantity: Double): String = BigDecimal.valueOf(quantity)
 
 fun lineAmount(price: Int, quantity: Double): Int = (price * quantity).roundToInt()
 
-fun cartLineAmount(line: CartLine): Int = if (line.product.pricingUnit.isNotBlank()) {
-    lineAmount(line.unitPrice, line.measureQuantity ?: 0.0)
-} else lineAmount(line.unitPrice, line.quantity)
+fun cartLineAmount(line: CartLine): Int = lineAmount(line.unitPrice, line.quantity)
 
-fun validCartQuantity(line: CartLine, enforceStock: Boolean = true, requirePriceMeasure: Boolean = true): Boolean {
+fun validCartQuantity(line: CartLine, enforceStock: Boolean = true): Boolean {
     val scaled = line.quantity * 1000
     val hasAtMostThreeDecimals = kotlin.math.abs(scaled - scaled.roundToInt()) < 0.001
-    val validSaleMeasure = if (line.product.pricingUnit.isBlank() || !requirePriceMeasure) true else {
-        val measure = line.measureQuantity ?: 0.0
-        val scaledMeasure = measure * 1000
-        measure > 0 && kotlin.math.abs(scaledMeasure - scaledMeasure.roundToInt()) < 0.001
-    }
     return line.quantity > 0 && (!enforceStock || line.quantity <= line.product.stock) && hasAtMostThreeDecimals &&
-        (line.product.fractionalQuantity || line.quantity % 1.0 == 0.0) && validSaleMeasure
+        (line.product.fractionalQuantity || line.quantity % 1.0 == 0.0)
 }

@@ -423,7 +423,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 stock = openingStock,
                 fractionalQuantity = fractionalQuantity,
                 unit = productUnit,
-                pricingUnit = productPricingUnit,
+                pricingUnit = "",
                 photoBase64 = productImageBase64
             )
         )
@@ -503,7 +503,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         openingStock = draft?.stock.orEmpty()
         fractionalQuantity = draft?.fractionalQuantity ?: false
         productUnit = draft?.unit ?: "PIECE"
-        productPricingUnit = draft?.pricingUnit.orEmpty()
+        productPricingUnit = ""
         productImageBase64 = draft?.photoBase64.orEmpty()
         productImageBitmap = runCatching {
             if (productImageBase64.isBlank()) null else {
@@ -672,10 +672,10 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         if (!api.isConfigured) return@LaunchedEffect
         runCatchingCancellable { withContext(Dispatchers.IO) { api.customers(token) } }
             .onSuccess { downloaded ->
-                val merged = CustomerCache.merge(cachedCustomers.toList(), downloaded)
+                val serverSnapshot = CustomerCache.fromServerSnapshot(downloaded, CustomerCache.loadPending(context))
                 cachedCustomers.clear()
-                cachedCustomers.addAll(merged)
-                CustomerCache.save(context, merged)
+                cachedCustomers.addAll(serverSnapshot)
+                CustomerCache.save(context, serverSnapshot)
                 syncPendingCustomerUploads(token)
             }
     }
@@ -988,7 +988,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             customerSyncing = true
             runCatchingCancellable { withContext(Dispatchers.IO) { api.customers(token) } }
                 .onSuccess { freshCustomers ->
-                    val merged = CustomerCache.merge(cachedCustomers.toList(), freshCustomers)
+                    val merged = CustomerCache.fromServerSnapshot(freshCustomers, CustomerCache.loadPending(context))
                     cachedCustomers.clear()
                     cachedCustomers.addAll(merged)
                     CustomerCache.save(context, merged)
@@ -1753,7 +1753,6 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     stock = openingStock,
                     fractionalQuantity = fractionalQuantity,
                     unit = productUnit,
-                    pricingUnit = productPricingUnit,
                     photo = productImageBitmap,
                     onTakePhoto = { productPhotoActions.takePhoto() },
                     onChoosePhoto = { productPhotoActions.choosePhoto() },
@@ -1764,7 +1763,6 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onCost = { unitCost = it },
                     onStock = { openingStock = it },
                     onFractionalQuantity = { fractionalQuantity = it },
-                    onPricingUnit = { productPricingUnit = it },
                     onUnit = { unit ->
                         productUnit = unit
                         fractionalQuantity = unit != "PIECE"
@@ -1795,7 +1793,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             try {
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
-                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit, productSizeVariant)
+                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, "", productSizeVariant)
                                     }
                                 }.onSuccess { created ->
                                     NewClothFormDraftCache.clear(context)
@@ -1957,10 +1955,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             cart[index] = cart[index].copy(quantity = newQuantity, measureQuantity = if (cart[index].product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
                         }
                     },
-                    onSetMeasureQuantity = { sku, measure ->
-                        val index = cart.indexOfFirst { it.product.sku == sku }
-                        if (index >= 0) cart[index] = cart[index].copy(measureQuantity = measure)
-                    },
+                    onRemoveCartItem = { sku -> cart.removeAll { it.product.sku == sku } },
                     onSetUnitPrice = { sku, price, sellAtCost ->
                         val index = cart.indexOfFirst { it.product.sku == sku }
                         if (index >= 0 && price > 0 && price >= cart[index].product.costPrice &&
@@ -2049,8 +2044,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                                 lineTotal = cartLineAmount(line),
                                                 fractionalQuantity = line.product.fractionalQuantity,
                                                 unit = line.product.unit,
-                                                measureQuantity = line.measureQuantity ?: 0.0,
-                                                pricingUnit = line.product.pricingUnit
+                                                measureQuantity = 0.0,
+                                                pricingUnit = ""
                                             )
                                         } }
                                     )
