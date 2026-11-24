@@ -392,6 +392,25 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         )
     }
 
+    fun saveBillDraft() {
+        BillFormDraftCache.save(
+            context,
+            BillFormDraft(
+                customerName = customerName,
+                customerPhone = customerPhone,
+                customerEmail = customerEmail,
+                customerAddress = customerAddress,
+                items = cart.toList(),
+                customerConfirmed = customerExists == true,
+                paymentMode = paymentMode,
+                discountValue = billDiscountValue,
+                discountEnabled = billDiscountEnabled,
+                creditAmountReceived = creditAmountReceived,
+                creditPaymentMethod = creditPaymentMethod
+            )
+        )
+    }
+
     fun saveNewClothDraft() {
         NewClothFormDraftCache.save(
             context,
@@ -413,6 +432,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     fun persistCurrentDraft() {
         when (screen) {
             Screen.PlaceOrder -> saveOrderDraft()
+            Screen.Bill -> saveBillDraft()
             Screen.AddProduct -> if (createdQrSku == null) saveNewClothDraft()
             else -> Unit
         }
@@ -434,6 +454,28 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             CustomerCache.normalizePhone(customerPhone).length >= 8
         customerMatches = emptyList()
         orderMode = true
+    }
+
+    fun restoreBillDraft() {
+        val draft = BillFormDraftCache.load(context)
+        customerPhone = draft?.customerPhone.orEmpty()
+        val normalizedDraftPhone = CustomerCache.normalizePhone(customerPhone)
+        val matchedCustomer = cachedCustomers.firstOrNull {
+            CustomerCache.normalizePhone(it.phone) == normalizedDraftPhone && normalizedDraftPhone.length >= 8
+        }
+        customerName = matchedCustomer?.name ?: draft?.customerName.orEmpty()
+        customerEmail = matchedCustomer?.email ?: draft?.customerEmail.orEmpty()
+        customerAddress = draft?.customerAddress.orEmpty()
+        cart.clear()
+        draft?.items?.let(cart::addAll)
+        customerExists = (matchedCustomer != null || draft?.customerConfirmed == true) && customerName.isNotBlank() && normalizedDraftPhone.length >= 8
+        customerMatches = emptyList()
+        paymentMode = draft?.paymentMode.orEmpty()
+        billDiscountValue = draft?.discountValue.orEmpty()
+        billDiscountEnabled = draft?.discountEnabled ?: false
+        creditAmountReceived = draft?.creditAmountReceived ?: "0"
+        creditPaymentMethod = draft?.creditPaymentMethod.orEmpty()
+        orderMode = false
     }
 
     fun restoreNewClothDraft() {
@@ -458,6 +500,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
 
     LaunchedEffect(
         screen, customerName, customerPhone, customerEmail, customerAddress, customerExists, cart.toList(),
+        paymentMode, billDiscountValue, billDiscountEnabled, creditAmountReceived, creditPaymentMethod,
         productName, productSizeVariant, productCategory, sellingPrice, unitCost, openingStock,
         fractionalQuantity, productUnit, productPricingUnit, productImageBase64, createdQrSku
     ) {
@@ -465,6 +508,10 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             Screen.PlaceOrder -> {
                 delay(300)
                 saveOrderDraft()
+            }
+            Screen.Bill -> {
+                delay(300)
+                saveBillDraft()
             }
             Screen.AddProduct -> if (createdQrSku == null) {
                 delay(300)
@@ -1511,11 +1558,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     },
                     onSignIn = { beginSignIn() },
                     onNewBill = {
-                        orderMode = false
-                        cart.clear()
-                        customerName = ""; customerPhone = ""; customerEmail = ""; customerAddress = ""
-                        customerExists = null; customerMatches = emptyList()
-                        paymentMode = ""; creditAmountReceived = "0"; creditPaymentMethod = ""; billDiscountValue = ""; billDiscountEnabled = false
+                        restoreBillDraft()
                         navigateTo(Screen.Bill)
                     },
                     onMakePayment = { navigateTo(Screen.CollectPayment) },
@@ -1532,11 +1575,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 Screen.BillCenter -> BillCenterScreen(
                     padding = insets,
                     onCreateBill = {
-                        orderMode = false
-                        cart.clear()
-                        customerName = ""; customerPhone = ""; customerEmail = ""; customerAddress = ""
-                        customerExists = null; customerMatches = emptyList()
-                        paymentMode = ""; creditAmountReceived = "0"; creditPaymentMethod = ""; billDiscountValue = ""; billDiscountEnabled = false
+                        restoreBillDraft()
                         navigateTo(Screen.Bill)
                     },
                     onFindBill = { billsPhone = ""; navigateTo(Screen.Bills) }
@@ -1967,6 +2006,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                     latestPdfUrl = ""
                                     latestInvoice = newBill
                                     message = "Bill saved successfully."
+                                    BillFormDraftCache.clear(context)
                                     cart.clear()
                                     customerName = ""
                                     customerPhone = ""
@@ -1988,6 +2028,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onBack = { navigateBack() },
                     onClear = {
                         if (screen == Screen.PlaceOrder) OrderFormDraftCache.clear(context)
+                        else BillFormDraftCache.clear(context)
                         cart.clear()
                         customerName = ""
                         customerPhone = ""
