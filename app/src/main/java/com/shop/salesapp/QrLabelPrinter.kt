@@ -10,7 +10,6 @@ import android.graphics.pdf.PdfDocument
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import com.shop.salesapp.ui.model.unitShort
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -106,12 +105,12 @@ object QrLabelPrinter {
         val textWidth = width - textX - padding
         val brand = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFF333333.toInt()
-            textSize = 5.4f
+            textSize = 6.0f
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
         }
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.BLACK
-            textSize = 7.2f
+            textSize = 7.8f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
         }
         val code = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -119,17 +118,9 @@ object QrLabelPrinter {
             textSize = 5.6f
             typeface = android.graphics.Typeface.create("monospace", android.graphics.Typeface.NORMAL)
         }
-        val price = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.BLACK
-            textSize = 9.2f
-            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-        }
-        val priceUnit = unitShort(product.pricingUnit.ifBlank { product.unit })
-        val priceLabel = "₹${product.price}${if (priceUnit == "pcs") "" else "/$priceUnit"}"
-        drawLabelText(canvas, "AVANI SUTO", brand, textX, height * 0.17f, textWidth, 1)
+        drawLabelText(canvas, "AVANI SUTO", brand, textX, height * 0.22f, textWidth, 1)
         val labelName = listOf(product.name, product.sizeVariant.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
-        drawLabelText(canvas, labelName, title, textX, height * 0.39f, textWidth, 2)
-        drawLabelText(canvas, priceLabel, price, textX, height * 0.69f, textWidth, 1)
+        drawLabelText(canvas, labelName, title, textX, height * 0.52f, textWidth, 2)
         drawLabelText(canvas, product.sku, code, textX, height * 0.90f, textWidth, 1)
     }
 
