@@ -1776,7 +1776,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                     }
                                 }.onSuccess { created ->
                                     NewClothFormDraftCache.clear(context)
-                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit, created.sizeVariant)
+                                    val addedDate = created.dateAdded.ifBlank { java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).toString() }
+                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit, created.sizeVariant, addedDate)
                                     val merged = ProductCache.merge(products.toList(), listOf(newProduct))
                                     products.clear()
                                     products.addAll(merged)

@@ -13,7 +13,7 @@ const APP = {
   timeZone: 'Asia/Kolkata',
   invoiceFolderName: 'Sales App Invoices',
   sheets: {
-    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit', 'Size / Variant'],
+    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit', 'Size / Variant', 'Date Added'],
     Customers: ['Customer ID', 'Customer Name', 'Phone', 'Email', 'City / Address', 'Customer Type', 'Total Orders', 'Total Spent', 'Last Purchase Date'],
     'Sales Invoices': ['Invoice #', 'Date', 'Customer ID', 'Customer Name', 'Items', 'Invoice Total', 'Gross Profit', 'Payment Mode', 'Invoice File', 'Customer Phone', 'Status'],
     'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit', 'Status', 'Unit', 'Pricing Unit', 'Measure Quantity'],
@@ -560,6 +560,7 @@ function listProducts_(config, query) {
   ensureColumn_(config, 'Inventory', 'Unit');
   ensureColumn_(config, 'Inventory', 'Pricing Unit');
   ensureColumn_(config, 'Inventory', 'Size / Variant');
+  ensureColumn_(config, 'Inventory', 'Date Added');
   const normalizedQuery = query.trim().toLowerCase();
   const table = getTable_(config, 'Inventory');
   const products = table.rows.filter(function (row) {
@@ -569,6 +570,7 @@ function listProducts_(config, query) {
       sku: String(row.SKU),
       name: String(row['Product Name'] || ''),
       sizeVariant: String(row['Size / Variant'] || ''),
+      dateAdded: productDateAdded_(row['Date Added']),
       category: String(row.Category || ''),
       price: Number(row['Selling Price'] || 0),
       stock: Number(row['Current Stock'] || 0),
@@ -1335,6 +1337,7 @@ function createProduct_(config, payload) {
   ensureColumn_(config, 'Inventory', 'Unit');
   ensureColumn_(config, 'Inventory', 'Pricing Unit');
   ensureColumn_(config, 'Inventory', 'Size / Variant');
+  ensureColumn_(config, 'Inventory', 'Date Added');
   const name = String(payload.name || '').trim();
   const sizeVariant = String(payload.sizeVariant || '').trim();
   const category = String(payload.category || 'Other').trim() || 'Other';
@@ -1354,6 +1357,7 @@ function createProduct_(config, payload) {
   });
   if (duplicate) throw apiError_('That product name and size / variant already exist. SKU: ' + duplicate.SKU, 409);
   const sku = newId_('SKU');
+  const dateAdded = Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd');
   const imageId = saveProductImage_(String(payload.imageBase64 || ''), sku);
   const rowNumber = nextFreeRow_(table);
   writeRecords_(config, [{
@@ -1362,6 +1366,7 @@ function createProduct_(config, payload) {
       SKU: sku,
       'Product Name': name,
       'Size / Variant': sizeVariant,
+      'Date Added': dateAdded,
       Category: category,
       Supplier: String(payload.supplier || '').trim(),
       'Unit Cost': unitCost,
@@ -1375,7 +1380,7 @@ function createProduct_(config, payload) {
       Availability: 'Available',
     },
   }], ['Inventory']);
-  return { sku: sku, name: name, sizeVariant: sizeVariant, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
+  return { sku: sku, name: name, sizeVariant: sizeVariant, dateAdded: dateAdded, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
 }
 
 function normalizedPricingUnit_(value) {
@@ -1561,7 +1566,7 @@ function getTables_(config, requestedTitles) {
     if (title === 'Stock Adjustments') ensureStockAdjustmentsSheet_(config);
     if (title === 'Inventory') {
       ensureStockAdjustmentsSheet_(config);
-      ensureColumns_(config, title, ['Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit']);
+      ensureColumns_(config, title, ['Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit', 'Size / Variant', 'Date Added']);
     }
     if (title === 'Sales Invoices' || title === 'Sales Items') ensureColumn_(config, title, 'Status');
   });
@@ -1771,6 +1776,15 @@ function invoiceNumber_() {
 function dateSerial_(isoDate) {
   const parts = isoDate.split('-').map(Number);
   return (Date.UTC(parts[0], parts[1] - 1, parts[2]) - Date.UTC(1899, 11, 30)) / 86400000;
+}
+
+function productDateAdded_(value) {
+  if (value instanceof Date) return Utilities.formatDate(value, APP.timeZone, 'yyyy-MM-dd');
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
+    return Utilities.formatDate(date, APP.timeZone, 'yyyy-MM-dd');
+  }
+  return String(value || '').trim().slice(0, 10);
 }
 
 function cellValue_(value) {

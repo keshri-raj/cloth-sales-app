@@ -73,7 +73,7 @@ internal fun SalesAppQrDialogs(
                     Image(qrBitmap, contentDescription = "QR code for ${product.name}", modifier = Modifier.size(190.dp))
                     Text(product.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text(product.sku, color = Muted, fontSize = 15.sp)
-                    Text(tr("Print on PSF-20 label roll (48 × 26 mm). Label includes QR, Avani Suto, cloth name and SKU.", "PSF-20 लेबल रोल (48 × 26 मिमी) पर प्रिंट करें। लेबल में QR, Avani Suto, कपड़े का नाम और SKU होगा।"), color = Muted, fontSize = 14.sp)
+                    Text(tr("Print on PSF-20 label roll (48 × 26 mm). Label shows Avani Suto, cloth name, category, SKU and added date—no price.", "PSF-20 लेबल रोल (48 × 26 मिमी) पर प्रिंट करें। लेबल पर Avani Suto, कपड़े का नाम, श्रेणी, SKU और जोड़ने की तारीख होगी—कीमत नहीं।"), color = Muted, fontSize = 14.sp)
                 }
             },
             confirmButton = { TextButton(onClick = { onPrintQrLabel(product) }) { Text(tr("Print QR label", "QR लेबल प्रिंट करें")) } },

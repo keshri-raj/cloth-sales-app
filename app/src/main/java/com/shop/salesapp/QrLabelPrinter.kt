@@ -11,6 +11,9 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.roundToInt
 
 object QrLabelPrinter {
@@ -105,23 +108,41 @@ object QrLabelPrinter {
         val textWidth = width - textX - padding
         val brand = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFF333333.toInt()
-            textSize = 6.0f
+            textSize = 7.4f
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
         }
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.BLACK
-            textSize = 7.8f
+            textSize = 7.4f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
         }
         val code = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFF222222.toInt()
-            textSize = 5.6f
+            textSize = 5.1f
             typeface = android.graphics.Typeface.create("monospace", android.graphics.Typeface.NORMAL)
         }
-        drawLabelText(canvas, "AVANI SUTO", brand, textX, height * 0.22f, textWidth, 1)
+        val detail = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF333333.toInt()
+            textSize = 5.1f
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+        }
+        val smallDetail = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF333333.toInt()
+            textSize = 4.8f
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+        }
+        drawLabelText(canvas, "AVANI SUTO", brand, textX, height * 0.19f, textWidth, 1)
         val labelName = listOf(product.name, product.sizeVariant.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
-        drawLabelText(canvas, labelName, title, textX, height * 0.52f, textWidth, 2)
-        drawLabelText(canvas, product.sku, code, textX, height * 0.90f, textWidth, 1)
+        drawLabelText(canvas, labelName, title, textX, height * 0.43f, textWidth, 2)
+        drawLabelText(canvas, product.category, detail, textX, height * 0.68f, textWidth, 1)
+        drawLabelText(canvas, product.sku, code, textX, height * 0.82f, textWidth, 1)
+        drawLabelText(canvas, addedDateText(product.dateAdded), smallDetail, textX, height * 0.96f, textWidth, 1)
+    }
+
+    private fun addedDateText(value: String): String {
+        val date = runCatching { LocalDate.parse(value.take(10)) }.getOrNull()
+            ?: return if (value.isBlank()) "Date unavailable" else value.take(15)
+        return "Added ${date.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))}"
     }
 
 }

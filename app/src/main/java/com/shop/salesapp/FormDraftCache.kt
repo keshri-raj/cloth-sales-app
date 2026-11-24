@@ -67,7 +67,8 @@ internal object OrderFormDraftCache {
                         fractionalQuantity = fractional,
                         unit = row.optString("unit").ifBlank { if (fractional) "METRE" else "PIECE" },
                         pricingUnit = row.optString("pricingUnit"),
-                        sizeVariant = row.optString("sizeVariant")
+                        sizeVariant = row.optString("sizeVariant"),
+                        dateAdded = row.optString("dateAdded")
                     )
                     CartLine(product, row.optDouble("quantity", 0.0), row.optDouble("measureQuantity").takeIf { row.has("measureQuantity") })
                 }
@@ -106,6 +107,7 @@ internal object OrderFormDraftCache {
                     .put("unit", product.unit)
                     .put("pricingUnit", product.pricingUnit)
                     .put("sizeVariant", product.sizeVariant)
+                    .put("dateAdded", product.dateAdded)
                     .put("quantity", line.quantity)
                     .put("measureQuantity", line.measureQuantity)
             )
@@ -201,7 +203,8 @@ internal object BillFormDraftCache {
                         fractionalQuantity = fractional,
                         unit = row.optString("unit").ifBlank { if (fractional) "METRE" else "PIECE" },
                         pricingUnit = row.optString("pricingUnit"),
-                        sizeVariant = row.optString("sizeVariant")
+                        sizeVariant = row.optString("sizeVariant"),
+                        dateAdded = row.optString("dateAdded")
                     )
                     CartLine(
                         product = product,
@@ -252,6 +255,7 @@ internal object BillFormDraftCache {
                     .put("unit", product.unit)
                     .put("pricingUnit", product.pricingUnit)
                     .put("sizeVariant", product.sizeVariant)
+                    .put("dateAdded", product.dateAdded)
                     .put("quantity", line.quantity)
                     .put("measureQuantity", line.measureQuantity)
                     .put("unitPrice", line.unitPrice)

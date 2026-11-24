@@ -30,7 +30,8 @@ object ProductCache {
                     fractionalQuantity = row.optBoolean("fractionalQuantity", false),
                     unit = row.optString("unit").ifBlank { if (row.optBoolean("fractionalQuantity", false)) "METRE" else "PIECE" },
                     pricingUnit = row.optString("pricingUnit"),
-                    sizeVariant = row.optString("sizeVariant")
+                    sizeVariant = row.optString("sizeVariant"),
+                    dateAdded = row.optString("dateAdded")
                 )
             }
         }.getOrDefault(emptyList())
@@ -52,6 +53,7 @@ object ProductCache {
                     .put("unit", product.unit)
                     .put("pricingUnit", product.pricingUnit)
                     .put("sizeVariant", product.sizeVariant)
+                    .put("dateAdded", product.dateAdded)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -63,7 +65,12 @@ object ProductCache {
     fun merge(existing: List<Product>, updates: List<Product>): List<Product> {
         val merged = LinkedHashMap<String, Product>()
         existing.forEach { merged[it.sku] = it }
-        updates.forEach { merged[it.sku] = it }
+        updates.forEach { product ->
+            val existing = merged[product.sku]
+            merged[product.sku] = if (product.dateAdded.isBlank() && !existing?.dateAdded.isNullOrBlank()) {
+                product.copy(dateAdded = existing!!.dateAdded)
+            } else product
+        }
         return merged.values.toList()
     }
 }
