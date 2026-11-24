@@ -32,14 +32,23 @@ internal fun SalesAppQrDialogs(
 ) {
     createdQrSku?.let { sku ->
         val qrBitmap = remember(sku) { createQrBitmap(sku).asImageBitmap() }
+        val product = products.firstOrNull { it.sku == sku }
         AlertDialog(
             onDismissRequest = onFinishProductCreation,
-            title = { Text(tr("QR label ready", "QR लेबल तैयार है")) },
+            title = { Text(tr("Cloth saved successfully", "कपड़ा सफलतापूर्वक सेव हुआ")) },
             text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Image(qrBitmap, contentDescription = "QR code for $sku", modifier = Modifier.size(220.dp))
-                    Text(sku, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Ink)
-                    Text(tr("Stick this code on the cloth.", "इस कोड को कपड़े पर चिपकाएँ।"), fontSize = 15.sp, color = Muted)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    product?.let { Text(it.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Ink) }
+                    Image(qrBitmap, contentDescription = "QR code for $sku", modifier = Modifier.size(190.dp))
+                    Text(sku, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink)
+                    Text(
+                        tr(
+                            "Its QR is ready. Print the product label now, or continue and print it later from the catalogue.",
+                            "इसका QR तैयार है। अभी उत्पाद का लेबल प्रिंट करें, या आगे बढ़ें और बाद में कैटलॉग से प्रिंट करें।"
+                        ),
+                        fontSize = 15.sp,
+                        color = Muted
+                    )
                 }
             },
             confirmButton = {
@@ -47,8 +56,8 @@ internal fun SalesAppQrDialogs(
                     TextButton(onClick = {
                         val product = products.firstOrNull { it.sku == sku }
                         if (product == null) onCreatedQrProductMissing() else onPrintQrLabel(product)
-                    }) { Text(tr("Print QR labels", "QR लेबल प्रिंट करें")) }
-                    TextButton(onClick = onFinishProductCreation) { Text(tr("Done", "हो गया")) }
+                    }) { Text(tr("Print label", "लेबल प्रिंट करें")) }
+                    TextButton(onClick = onFinishProductCreation) { Text(tr("Continue", "आगे बढ़ें")) }
                 }
             }
         )
