@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="1000" viewBox="0 0 430 1000">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f2f5fa"/>
+    </linearGradient>
+    <pattern id="clothA" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#a8a794"/>
+      <path d="M0 2L4 0M5 10L10 5M-2 8L2 4" stroke="#e6e5d6" stroke-width="2"/>
+      <circle cx="7" cy="3" r="1.4" fill="#68735e"/>
+    </pattern>
+    <pattern id="clothB" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="#b82338"/>
+      <path d="M0 3L3 0M6 12L12 6M-2 10L2 6" stroke="#f4c3bb" stroke-width="2"/>
+      <circle cx="8" cy="3" r="1.5" fill="#eebd4b"/>
+    </pattern>
+    <pattern id="clothC" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="#771c31"/>
+      <path d="M0 0L12 12M12 0L0 12" stroke="#d9b7aa" stroke-width="1.4"/>
+      <circle cx="6" cy="6" r="2" fill="#ba6b55"/>
+    </pattern>
+  </defs>
+
+  <rect width="430" height="1000" fill="url(#bg)"/>
+  <rect width="430" height="55" fill="#fff"/>
+  <text x="20" y="35" font-family="Arial,sans-serif" font-size="16" fill="#343b46">01:38</text>
+  <circle cx="101" cy="27" r="8" fill="none" stroke="#59616b" stroke-width="2"/>
+  <path d="M119 27l5 5 9-11" fill="none" stroke="#59616b" stroke-width="2"/>
+  <text x="346" y="35" font-family="Arial,sans-serif" font-size="14" fill="#343b46">5G  ▮▮  79%</text>
+
+  <rect y="55" width="430" height="76" fill="#fff"/>
+  <path d="M33 93H13m0 0l9-9m-9 9l9 9" fill="none" stroke="#173b60" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="57" y="101" font-family="Arial,sans-serif" font-size="23" font-weight="700" fill="#173b60">Cloth catalogue</text>
+  <path d="M341 85l-14 9 14 9m-14-9h23" fill="none" stroke="#b64b15" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M392 84a14 14 0 1 0 3 20m0-20v10h-10" fill="none" stroke="#b64b15" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="20" y="145" width="390" height="60" rx="16" fill="#fff" stroke="#8793a6" stroke-width="1.5"/>
+  <circle cx="47" cy="173" r="9" fill="none" stroke="#555d6b" stroke-width="2.4"/>
+  <path d="M54 180l7 7" stroke="#555d6b" stroke-width="2.4" stroke-linecap="round"/>
+  <text x="73" y="180" font-family="Arial,sans-serif" font-size="16" fill="#626a79">Search cloth name or code</text>
+  <g transform="translate(373 158)" fill="#c34b16">
+    <rect width="6" height="6"/><rect x="8" width="6" height="6"/><rect x="16" width="6" height="6"/>
+    <rect y="8" width="6" height="6"/><rect x="16" y="8" width="6" height="6"/>
+    <rect y="16" width="6" height="6"/><rect x="8" y="16" width="6" height="6"/><rect x="16" y="16" width="6" height="6"/>
+    <rect x="8" y="8" width="3" height="3" fill="#fff"/>
+  </g>
+
+  <g font-family="Arial,sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="20" y="221" width="65" height="38" rx="19" fill="#fff" stroke="#d9e0e8"/><text x="52" y="245" fill="#31465d">All</text>
+    <rect x="91" y="221" width="128" height="38" rx="19" fill="#173b60"/><text x="151" y="238" fill="#fff">Label pending</text><rect x="185" y="228" width="25" height="23" rx="11" fill="#f4bc4b"/><text x="197" y="244" fill="#60380b" font-size="12">15</text>
+    <rect x="225" y="221" width="98" height="38" rx="19" fill="#fff" stroke="#d9e0e8"/><text x="274" y="245" fill="#31465d">Out of stock</text>
+    <rect x="329" y="221" width="81" height="38" rx="19" fill="#fff" stroke="#d9e0e8"/><text x="369" y="245" fill="#31465d">Attached</text>
+  </g>
+
+  <text x="23" y="293" font-family="Arial,sans-serif" font-size="15" font-weight="700" fill="#173b60">2 selected · 11 unprinted</text>
+  <text x="405" y="293" text-anchor="end" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#b64b15">Select unprinted</text>
+  <text x="35" y="329" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#b64b15">Cancel</text>
+  <text x="120" y="329" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#b64b15">Mark printed</text>
+  <rect x="20" y="347" width="390" height="54" rx="15" fill="#bf4a14"/>
+  <path d="M133 365h14v12h-14zm-2 14h18v7h-18zM130 362h20v3h-20z" fill="#fff"/>
+  <text x="162" y="381" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#fff">Create label PDF · 14 labels</text>
+
+  <rect x="20" y="413" width="390" height="404" rx="18" fill="#fff" stroke="#dce2eb" stroke-width="1.2"/>
+  <rect x="21" y="414" width="388" height="44" rx="17" fill="#f6f8fb"/>
+  <text x="38" y="441" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing=".7" fill="#627083">LABEL</text>
+  <text x="78" y="441" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing=".7" fill="#627083">ITEM</text>
+  <text x="249" y="441" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing=".7" fill="#627083">SIZE</text>
+  <text x="297" y="441" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing=".7" fill="#627083">PRICE</text>
+  <text x="340" y="441" font-family="Arial,sans-serif" font-size="9" font-weight="700" letter-spacing=".2" fill="#627083">STOCK</text>
+  <text x="394" y="441" text-anchor="middle" font-family="Arial,sans-serif" font-size="9" font-weight="700" fill="#627083">QR</text>
+
+  <!-- row 1 -->
+  <rect x="21" y="458" width="388" height="88" fill="#fff8e8"/>
+  <rect x="34" y="489" width="21" height="21" rx="4" fill="#b64b15"/>
+  <path d="M39 499l4 4 8-9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="68" y="472" width="47" height="58" rx="10" fill="url(#clothA)"/>
+  <text x="123" y="488" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#173b60">SHWAL I 20</text>
+  <text x="123" y="510" font-family="Arial,sans-serif" font-size="10" fill="#737a85">SKU-CE739403B7</text>
+  <rect x="244" y="478" width="49" height="22" rx="11" fill="#e7edf5"/><text x="268" y="493" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" fill="#425a72">One size</text>
+  <text x="299" y="501" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#173b60">₹412</text>
+  <text x="350" y="501" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#ad352e">0</text>
+  <rect x="377" y="480" width="25" height="25" rx="5" fill="#fff" stroke="#c9d8e7"/>
+  <g transform="translate(382 485)" fill="#121820"><rect width="6" height="6"/><rect x="11" width="6" height="6"/><rect y="11" width="6" height="6"/><rect x="11" y="11" width="6" height="6"/><rect x="7" y="7" width="3" height="3"/></g>
+  <path d="M21 546h388" stroke="#e6eaf0"/>
+
+  <!-- row 2 -->
+  <rect x="21" y="547" width="388" height="88" fill="#fff8e8"/>
+  <rect x="34" y="578" width="21" height="21" rx="4" fill="#b64b15"/>
+  <path d="M39 588l4 4 8-9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="68" y="561" width="47" height="58" rx="10" fill="url(#clothB)"/>
+  <text x="123" y="577" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#173b60">OSWAL RUBY</text>
+  <text x="123" y="599" font-family="Arial,sans-serif" font-size="10" fill="#737a85">SKU-304662916B</text>
+  <rect x="244" y="567" width="28" height="22" rx="11" fill="#e7edf5"/><text x="258" y="582" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#425a72">M</text>
+  <text x="299" y="590" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#173b60">₹188</text>
+  <text x="350" y="590" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#ad352e">0</text>
+  <rect x="377" y="569" width="25" height="25" rx="5" fill="#fff" stroke="#c9d8e7"/>
+  <g transform="translate(382 574)" fill="#121820"><rect width="6" height="6"/><rect x="11" width="6" height="6"/><rect y="11" width="6" height="6"/><rect x="11" y="11" width="6" height="6"/><rect x="7" y="7" width="3" height="3"/></g>
+  <path d="M21 635h388" stroke="#e6eaf0"/>
+
+  <!-- row 3, attached/printed -->
+  <rect x="21" y="636" width="388" height="88" fill="#fff"/>
+  <circle cx="44" cy="679" r="11" fill="#e2f3e6"/><path d="M39 679l4 4 7-8" fill="none" stroke="#268343" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="68" y="650" width="47" height="58" rx="10" fill="url(#clothB)"/>
+  <text x="123" y="666" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#173b60">OSWAL RUBY</text>
+  <text x="123" y="688" font-family="Arial,sans-serif" font-size="10" fill="#737a85">SKU-304662916C</text>
+  <rect x="244" y="656" width="28" height="22" rx="11" fill="#e7edf5"/><text x="258" y="671" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#425a72">L</text>
+  <text x="299" y="679" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#173b60">₹188</text>
+  <text x="350" y="679" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#173b60">4</text>
+  <rect x="377" y="658" width="25" height="25" rx="5" fill="#fff" stroke="#c9d8e7"/>
+  <g transform="translate(382 663)" fill="#121820"><rect width="6" height="6"/><rect x="11" width="6" height="6"/><rect y="11" width="6" height="6"/><rect x="11" y="11" width="6" height="6"/><rect x="7" y="7" width="3" height="3"/></g>
+  <path d="M21 724h388" stroke="#e6eaf0"/>
+
+  <!-- row 4 -->
+  <rect x="21" y="725" width="388" height="91" fill="#fff"/>
+  <rect x="34" y="759" width="21" height="21" rx="4" fill="#fff" stroke="#9ba6b4" stroke-width="1.5"/>
+  <rect x="68" y="739" width="47" height="62" rx="10" fill="url(#clothC)"/>
+  <text x="123" y="757" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#173b60">OSWAL KING</text>
+  <text x="123" y="779" font-family="Arial,sans-serif" font-size="10" fill="#737a85">SKU-7CFEB5DDDC</text>
+  <rect x="244" y="747" width="49" height="22" rx="11" fill="#e7edf5"/><text x="268" y="762" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" fill="#425a72">One size</text>
+  <text x="299" y="770" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#173b60">₹341</text>
+  <text x="350" y="770" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#ad352e">0</text>
+  <rect x="377" y="749" width="25" height="25" rx="5" fill="#fff" stroke="#c9d8e7"/>
+  <g transform="translate(382 754)" fill="#121820"><rect width="6" height="6"/><rect x="11" width="6" height="6"/><rect y="11" width="6" height="6"/><rect x="11" y="11" width="6" height="6"/><rect x="7" y="7" width="3" height="3"/></g>
+
+  <rect x="20" y="833" width="390" height="54" rx="16" fill="#fff" stroke="#e0e5ec"/>
+  <text x="39" y="867" font-family="Arial,sans-serif" font-size="15" font-weight="700" fill="#173b60">Cloth removal requests</text>
+  <rect x="347" y="848" width="34" height="24" rx="12" fill="#edf1f6"/><text x="364" y="865" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="700" fill="#42566d">0</text>
+  <path d="M392 855l7 7 7-7" fill="none" stroke="#667488" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect y="948" width="430" height="52" fill="#fff"/>
+  <rect x="171" y="965" width="40" height="18" rx="8" fill="none" stroke="#737983" stroke-width="2"/>
+  <circle cx="216" cy="974" r="9" fill="none" stroke="#737983" stroke-width="2"/>
+  <path d="M254 968l-7 7 7 7" fill="none" stroke="#737983" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

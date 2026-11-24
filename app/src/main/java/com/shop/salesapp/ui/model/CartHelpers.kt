@@ -12,8 +12,8 @@ fun formatQuantity(quantity: Double): String = BigDecimal.valueOf(quantity)
 fun lineAmount(price: Int, quantity: Double): Int = (price * quantity).roundToInt()
 
 fun cartLineAmount(line: CartLine): Int = if (line.product.pricingUnit.isNotBlank()) {
-    lineAmount(line.product.price, line.measureQuantity ?: 0.0)
-} else lineAmount(line.product.price, line.quantity)
+    lineAmount(line.unitPrice, line.measureQuantity ?: 0.0)
+} else lineAmount(line.unitPrice, line.quantity)
 
 fun validCartQuantity(line: CartLine, enforceStock: Boolean = true, requirePriceMeasure: Boolean = true): Boolean {
     val scaled = line.quantity * 1000

@@ -3,7 +3,6 @@ package com.shop.salesapp
 import android.content.Context
 import android.content.ContentValues
 import android.content.ContentUris
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -11,11 +10,12 @@ import android.graphics.pdf.PdfDocument
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.shop.salesapp.ui.model.unitShort
 import java.io.File
 import kotlin.math.roundToInt
 
 object QrLabelPrinter {
-    /** Creates one 48 × 26 mm page per cloth for the PSF-20 label roll. */
+    /** Creates one 48 × 26 mm page per list entry; repeated entries produce extra copies. */
     fun createLabelPdf(context: Context, products: List<Product>): File {
         require(products.isNotEmpty()) { "No clothes are available to export." }
         val directory = File(context.cacheDir, "qr-labels")
@@ -26,7 +26,7 @@ object QrLabelPrinter {
         val pageHeight = (26f * pointsPerMm).roundToInt()
         val document = PdfDocument()
         try {
-            products.distinctBy { it.sku }.forEachIndexed { index, product ->
+            products.forEachIndexed { index, product ->
                 val page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, index + 1).create())
                 drawProductLabel(page.canvas, pageWidth.toFloat(), pageHeight.toFloat(), product)
                 document.finishPage(page)
@@ -96,17 +96,22 @@ object QrLabelPrinter {
     }
 
     private fun drawProductLabel(canvas: Canvas, width: Float, height: Float, product: Product) {
-        val padding = 4f
+        val padding = 6f
         val qrSize = height - padding * 2
         val qr = createQrBitmap(product.sku)
         canvas.drawBitmap(qr, null, RectF(padding, padding, padding + qrSize, padding + qrSize), null)
         qr.recycle()
 
-        val textX = padding + qrSize + 5f
+        val textX = padding + qrSize + 4f
         val textWidth = width - textX - padding
+        val brand = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF333333.toInt()
+            textSize = 5.4f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+        }
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.BLACK
-            textSize = 7.4f
+            textSize = 7.2f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
         }
         val code = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -116,12 +121,16 @@ object QrLabelPrinter {
         }
         val price = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.BLACK
-            textSize = 7.2f
+            textSize = 9.2f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
         }
-        drawLabelText(canvas, product.name, title, textX, height * 0.28f, textWidth, 2)
-        canvas.drawText("₹${product.price}", textX, height * 0.60f, price)
-        drawLabelText(canvas, product.sku, code, textX, height * 0.86f, textWidth, 1)
+        val priceUnit = unitShort(product.pricingUnit.ifBlank { product.unit })
+        val priceLabel = "₹${product.price}${if (priceUnit == "pcs") "" else "/$priceUnit"}"
+        drawLabelText(canvas, "AVANI SUTO", brand, textX, height * 0.17f, textWidth, 1)
+        val labelName = listOf(product.name, product.sizeVariant.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
+        drawLabelText(canvas, labelName, title, textX, height * 0.39f, textWidth, 2)
+        drawLabelText(canvas, priceLabel, price, textX, height * 0.69f, textWidth, 1)
+        drawLabelText(canvas, product.sku, code, textX, height * 0.90f, textWidth, 1)
     }
 
 }
@@ -133,11 +142,22 @@ private fun drawLabelText(canvas: Canvas, value: String, paint: Paint, x: Float,
     for (word in words) {
         val candidate = if (line.isBlank()) word else "$line $word"
         if (paint.measureText(candidate) > width && line.isNotBlank()) {
-            canvas.drawText(line, x, firstBaseline + lineIndex * paint.textSize * 1.15f, paint)
+            drawFittedText(canvas, line, paint, x, firstBaseline + lineIndex * paint.textSize * 1.15f, width)
             line = word
             lineIndex++
             if (lineIndex >= maxLines) return
         } else line = candidate
     }
-    if (line.isNotBlank() && lineIndex < maxLines) canvas.drawText(line, x, firstBaseline + lineIndex * paint.textSize * 1.15f, paint)
+    if (line.isNotBlank() && lineIndex < maxLines) {
+        drawFittedText(canvas, line, paint, x, firstBaseline + lineIndex * paint.textSize * 1.15f, width)
+    }
+}
+
+private fun drawFittedText(canvas: Canvas, value: String, paint: Paint, x: Float, baseline: Float, width: Float) {
+    var fitted = value
+    val ellipsis = "…"
+    while (fitted.isNotEmpty() && paint.measureText(fitted + ellipsis) > width) {
+        fitted = fitted.dropLast(1)
+    }
+    canvas.drawText(if (fitted == value) value else "$fitted$ellipsis", x, baseline, paint)
 }

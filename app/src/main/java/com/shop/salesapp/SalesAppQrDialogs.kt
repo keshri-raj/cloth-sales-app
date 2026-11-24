@@ -1,0 +1,74 @@
+package com.shop.salesapp
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import com.shop.salesapp.ui.theme.Ink
+import com.shop.salesapp.ui.theme.Muted
+import com.shop.salesapp.ui.theme.tr
+
+@Composable
+internal fun SalesAppQrDialogs(
+    createdQrSku: String?,
+    previewProduct: Product?,
+    products: List<Product>,
+    onFinishProductCreation: () -> Unit,
+    onCreatedQrProductMissing: () -> Unit,
+    onPrintQrLabel: (Product) -> Unit,
+    onClosePreview: () -> Unit
+) {
+    createdQrSku?.let { sku ->
+        val qrBitmap = remember(sku) { createQrBitmap(sku).asImageBitmap() }
+        AlertDialog(
+            onDismissRequest = onFinishProductCreation,
+            title = { Text(tr("QR label ready", "QR लेबल तैयार है")) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Image(qrBitmap, contentDescription = "QR code for $sku", modifier = Modifier.size(220.dp))
+                    Text(sku, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Ink)
+                    Text(tr("Stick this code on the cloth.", "इस कोड को कपड़े पर चिपकाएँ।"), fontSize = 15.sp, color = Muted)
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = {
+                        val product = products.firstOrNull { it.sku == sku }
+                        if (product == null) onCreatedQrProductMissing() else onPrintQrLabel(product)
+                    }) { Text(tr("Print QR labels", "QR लेबल प्रिंट करें")) }
+                    TextButton(onClick = onFinishProductCreation) { Text(tr("Done", "हो गया")) }
+                }
+            }
+        )
+    }
+
+    previewProduct?.let { product ->
+        val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
+        AlertDialog(
+            onDismissRequest = onClosePreview,
+            title = { Text(tr("Cloth QR label", "कपड़े का QR लेबल")) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Image(qrBitmap, contentDescription = "QR code for ${product.name}", modifier = Modifier.size(190.dp))
+                    Text(product.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(product.sku, color = Muted, fontSize = 15.sp)
+                    Text(tr("Print on PSF-20 label roll (48 × 26 mm). Label includes QR, name, price and SKU.", "PSF-20 लेबल रोल (48 × 26 मिमी) पर प्रिंट करें। लेबल में QR, नाम, कीमत और SKU होगा।"), color = Muted, fontSize = 14.sp)
+                }
+            },
+            confirmButton = { TextButton(onClick = { onPrintQrLabel(product) }) { Text(tr("Print QR label", "QR लेबल प्रिंट करें")) } },
+            dismissButton = { TextButton(onClick = onClosePreview) { Text(tr("Close", "बंद करें")) } }
+        )
+    }
+}

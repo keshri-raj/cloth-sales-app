@@ -62,12 +62,19 @@ fun ScreenHeader(
     onSync: (() -> Unit)? = null,
     syncing: Boolean = false,
     syncEnabled: Boolean = true,
-    onShare: (() -> Unit)? = null
+    onShare: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null,
+    clearEnabled: Boolean = true
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Go back", tint = Ink) }
         Spacer(Modifier.width(8.dp))
         Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
+        if (onClear != null) {
+            TextButton(onClick = onClear, enabled = clearEnabled) {
+                Text(tr("Clear", "साफ़ करें"), color = if (clearEnabled) Teal else Muted)
+            }
+        }
         if (onShare != null) {
             IconButton(onClick = onShare, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Rounded.Share, contentDescription = tr("Share", "शेयर करें"), tint = Teal)

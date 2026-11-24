@@ -27,32 +27,110 @@ object CustomerPdfGenerator {
     private val cardPaper = 0xFFF0E5D7.toInt()
 
     fun quotation(request: CustomerOrderRequest, products: List<Product>): ByteArray {
+        val items = resolveItems(request, products)
         val amount = quotationAmount(request, products)
         return buildPdf { document, output ->
-            val page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create())
-            val canvas = page.canvas
-            canvas.drawColor(paper)
-            text(canvas, "CLOTHING & TEXTILES", LEFT, 56f, 9f, wine, true)
-            text(canvas, "Avani Suto", LEFT, 122f, 43f, wine, serif = true)
-            text(canvas, "ORDER REQUEST", RIGHT, 122f, 12f, wine, true, Paint.Align.RIGHT)
-            rule(canvas, 151f)
-            text(canvas, "CUSTOMER", LEFT, 189f, 9f, gray, true)
-            text(canvas, request.customerName.ifBlank { "Customer" }, LEFT, 216f, 17f, navy, true)
-            if (request.customerPhone.isNotBlank()) text(canvas, request.customerPhone, LEFT, 240f, 11f, gray)
-            text(canvas, "REQUEST ID", LEFT, 293f, 9f, gray, true)
-            text(canvas, request.number, LEFT, 318f, 14f, navy, true)
-            text(canvas, "DATE", LEFT, 360f, 9f, gray, true)
-            text(canvas, request.date.ifBlank { "—" }, LEFT, 385f, 12f, navy)
-            val amountBox = RectF(LEFT, 444f, RIGHT, 555f)
-            canvas.drawRoundRect(amountBox, 8f, 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = wine })
-            text(canvas, "AMOUNT", LEFT + 18f, 481f, 10f, paper, true)
-            text(canvas, amount?.let { "₹${money(it)}" } ?: "To be confirmed", LEFT + 18f, 526f, 24f, paper, true)
-            text(canvas, "Please contact the shop to confirm the final amount.", LEFT, 593f, 10f, gray)
-            text(canvas, "Thank you for choosing Avani Suto.", LEFT, 617f, 11f, wine, true)
-            val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 0.8f }
-            canvas.drawLine(LEFT, PAGE_HEIGHT - 40f, RIGHT, PAGE_HEIGHT - 40f, footerPaint)
-            text(canvas, "AVANI SUTO  /  CUSTOMER QUOTATION", LEFT, PAGE_HEIGHT - 21f, 7.5f, gray, true)
-            document.finishPage(page)
+            var pageNumber = 0
+            var page: PdfDocument.Page? = null
+            var canvas: Canvas? = null
+            var y = 0f
+
+            fun startPage() {
+                pageNumber++
+                page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create())
+                canvas = page!!.canvas
+                canvas!!.drawColor(paper)
+                if (pageNumber == 1) {
+                    text(canvas!!, "AVANI SUTO", LEFT, 46f, 20f, navy, true)
+                    text(canvas!!, "CLOTHING & TEXTILES", LEFT, 61f, 7.5f, gray, true)
+                    text(canvas!!, "Main Road, Ward No 11 · Simri Bakhtiarpur", LEFT, 75f, 7.5f, gray)
+                    text(canvas!!, "Saharsa · Bihar · 852127", LEFT, 88f, 7.5f, gray)
+                    val box = RectF(270f, 23f, RIGHT, 94f)
+                    canvas!!.drawRoundRect(box, 7f, 7f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFEAF2F8.toInt() })
+                    text(canvas!!, "ORDER QUOTATION", 282f, 45f, 11f, navy, true)
+                    text(canvas!!, "Request ID", 282f, 63f, 7f, gray, true)
+                    text(canvas!!, request.number.takeLast(20), RIGHT - 10f, 63f, 7.5f, navy, true, Paint.Align.RIGHT)
+                    text(canvas!!, "Date  ${request.date.ifBlank { "—" }}", 282f, 81f, 8f, gray)
+                    rule(canvas!!, 107f)
+                    text(canvas!!, "CUSTOMER", LEFT, 128f, 7.5f, gray, true)
+                    text(canvas!!, request.customerName.ifBlank { "Customer" }, LEFT, 148f, 12f, navy, true)
+                    if (request.customerPhone.isNotBlank()) text(canvas!!, request.customerPhone, LEFT, 163f, 8.5f, gray)
+                    text(canvas!!, "STATUS", 280f, 128f, 7.5f, gray, true)
+                    text(canvas!!, request.status.ifBlank { "Pending" }, 280f, 148f, 9f, navy, true)
+                    y = 193f
+                } else {
+                    text(canvas!!, "AVANI SUTO  ·  ${request.number}", LEFT, 36f, 9f, navy, true)
+                    text(canvas!!, "Continued", RIGHT, 36f, 7.5f, gray, align = Paint.Align.RIGHT)
+                    y = 59f
+                }
+                val header = RectF(LEFT, y - 13f, RIGHT, y + 9f)
+                canvas!!.drawRoundRect(header, 3f, 3f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navy })
+                text(canvas!!, "NO.", LEFT + 5f, y + 1f, 7f, paper, true)
+                text(canvas!!, "PRODUCT", LEFT + 25f, y + 1f, 7f, paper, true)
+                text(canvas!!, "QTY", 275f, y + 1f, 7f, paper, true, Paint.Align.RIGHT)
+                text(canvas!!, "RATE", 330f, y + 1f, 7f, paper, true, Paint.Align.RIGHT)
+                text(canvas!!, "AMOUNT", RIGHT - 5f, y + 1f, 7f, paper, true, Paint.Align.RIGHT)
+                y += 26f
+            }
+
+            fun finishPage() {
+                val active = page ?: return
+                val footer = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 0.8f }
+                active.canvas.drawLine(LEFT, PAGE_HEIGHT - 37f, RIGHT, PAGE_HEIGHT - 37f, footer)
+                text(active.canvas, "AVANI SUTO  /  CUSTOMER QUOTATION", LEFT, PAGE_HEIGHT - 20f, 7f, gray, true)
+                text(active.canvas, "$pageNumber", RIGHT, PAGE_HEIGHT - 20f, 7f, wine, true, Paint.Align.RIGHT)
+                document.finishPage(active)
+                page = null
+                canvas = null
+            }
+
+            startPage()
+            items.forEachIndexed { index, item ->
+                val product = products.firstOrNull { it.sku.equals(item.sku, true) }
+                val itemName = item.name.ifBlank { product?.name ?: item.sku }
+                val nameLines = wrap(itemName, 30).take(2)
+                val rowHeight = if (item.sku.isNotBlank()) 34f else 29f
+                if (y + rowHeight > PAGE_HEIGHT - 55f) {
+                    finishPage()
+                    startPage()
+                }
+                text(canvas!!, (index + 1).toString(), LEFT + 5f, y, 7.5f, gray)
+                nameLines.forEachIndexed { lineIndex, value -> text(canvas!!, value, LEFT + 25f, y + lineIndex * 11f, 8f, navy, lineIndex == 0) }
+                if (item.sku.isNotBlank()) text(canvas!!, item.sku, LEFT + 25f, y + 22f, 6.5f, gray)
+                val quantityUnit = when (product?.unit?.uppercase(Locale.ROOT)) {
+                    "KG" -> "kg"
+                    "METRE" -> "m"
+                    else -> "pc"
+                }
+                text(canvas!!, "${quantity(item.quantity)} $quantityUnit", 275f, y, 7.5f, gray, align = Paint.Align.RIGHT)
+                val pricePending = product == null || product.pricingUnit.isNotBlank()
+                text(canvas!!, if (pricePending) "Confirm" else "₹${money(product.price)}", 330f, y, 7.5f, gray, align = Paint.Align.RIGHT)
+                val lineAmount = if (!pricePending) product!!.price * item.quantity else null
+                text(canvas!!, lineAmount?.let { "₹${money(it.roundToInt())}" } ?: "Confirm", RIGHT - 5f, y, 7.5f, navy, true, Paint.Align.RIGHT)
+                y += rowHeight
+                rule(canvas!!, y - 4f)
+            }
+            if (items.isEmpty()) {
+                text(canvas!!, request.productName.ifBlank { "Requested items" }, LEFT + 5f, y, 8f, navy, true)
+                y += 31f
+                rule(canvas!!, y - 4f)
+            }
+
+            val summaryHeight = 104f
+            if (y + summaryHeight > PAGE_HEIGHT - 55f) {
+                finishPage()
+                startPage()
+            }
+            y += 12f
+            val summaryBox = RectF(LEFT, y - 2f, RIGHT, y + 82f)
+            canvas!!.drawRoundRect(summaryBox, 6f, 6f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFEAF2F8.toInt() })
+            text(canvas!!, "AMOUNT", LEFT + 12f, y + 21f, 7.5f, gray, true)
+            text(canvas!!, amount?.let { "₹${money(it)}" } ?: "To be confirmed", LEFT + 12f, y + 51f, 18f, navy, true)
+            text(canvas!!, "Final amount is confirmed by the shop.", LEFT + 12f, y + 69f, 7f, gray)
+            y += 104f
+            text(canvas!!, "Thank you for choosing Avani Suto.", LEFT, y + 12f, 8.5f, navy, true)
+            text(canvas!!, "This is a quotation for the requested items, not a payment receipt.", LEFT, y + 27f, 7f, gray)
+            finishPage()
             document.writeTo(output)
             output.toByteArray()
         }
@@ -172,14 +250,12 @@ object CustomerPdfGenerator {
         val items = resolveItems(request, products)
         if (items.isEmpty()) return null
         var amount = 0.0
-        var hasPricedItem = false
         items.forEach { item ->
-            val product = products.firstOrNull { it.sku.equals(item.sku, true) } ?: return@forEach
-            if (product.pricingUnit.isNotBlank()) return@forEach
+            val product = products.firstOrNull { it.sku.equals(item.sku, true) } ?: return null
+            if (product.pricingUnit.isNotBlank()) return null
             amount += product.price * item.quantity
-            hasPricedItem = true
         }
-        return amount.roundToInt().takeIf { hasPricedItem }
+        return amount.roundToInt()
     }
 
     private fun categoryTitle(value: String): String = value.substringBefore(" · ").trim().ifBlank { "Collection" }

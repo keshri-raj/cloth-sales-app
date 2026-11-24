@@ -221,6 +221,7 @@ fun BillSearchProductCard(
             BillClothThumbnail(product, imageLoader, Modifier.size(76.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(product.name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
+                if (product.sizeVariant.isNotBlank()) Text(product.sizeVariant, fontSize = 12.sp, color = Muted, maxLines = 1)
                 Text(tr("ID", "आईडी") + ": ${product.sku}", fontSize = 13.sp, color = Muted, maxLines = 1)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("₹${product.price}${if (product.pricingUnit.isNotBlank()) "/${unitShort(product.pricingUnit)}" else ""}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1)
@@ -275,6 +276,7 @@ fun ProductCard(product: Product, live: Boolean, orderMode: Boolean, onAdd: () -
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(product.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    if (product.sizeVariant.isNotBlank()) Text(product.sizeVariant, fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(4.dp))
                     Text("${product.sku} · ${product.category}", fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(10.dp))

@@ -16,6 +16,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -25,7 +28,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,34 +46,53 @@ import com.shop.salesapp.ui.theme.Ink
 import com.shop.salesapp.ui.theme.Muted
 import com.shop.salesapp.ui.theme.Teal
 import com.shop.salesapp.ui.theme.tr
+import kotlinx.coroutines.launch
 
 @Composable
 fun CollectPaymentScreen(
     padding: PaddingValues,
     customers: List<ShopCustomer>,
+    searchQuery: String,
+    contactName: String,
+    contactPhone: String,
+    onSearchQuery: (String) -> Unit,
+    onPickContact: () -> Unit,
     onBack: () -> Unit,
+    onCreateCustomer: suspend (String, String, String, String) -> ShopCustomer,
     onSubmit: (ShopCustomer, Int, String, String) -> Unit
 ) {
-    var search by remember { mutableStateOf("") }
     var customer by remember { mutableStateOf<ShopCustomer?>(null) }
     var amount by remember { mutableStateOf("") }
     var method by remember { mutableStateOf("Cash") }
     var note by remember { mutableStateOf("") }
+    var showCreateCustomer by remember { mutableStateOf(false) }
+    var newCustomerName by remember { mutableStateOf("") }
+    var newCustomerPhone by remember { mutableStateOf("") }
+    var newCustomerEmail by remember { mutableStateOf("") }
+    var newCustomerAddress by remember { mutableStateOf("") }
+    var creatingCustomer by remember { mutableStateOf(false) }
+    var createCustomerError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val matches = customers.filter {
-        search.isBlank() || it.name.contains(search.trim(), ignoreCase = true) ||
-            CustomerCache.normalizePhone(it.phone).contains(CustomerCache.normalizePhone(search))
+        searchQuery.isBlank() || it.name.contains(searchQuery.trim(), ignoreCase = true) ||
+            CustomerCache.normalizePhone(it.phone).contains(CustomerCache.normalizePhone(searchQuery))
     }.take(60)
 
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
         ScreenHeader(tr("Collect", "जमा करें"), onBack)
         if (customer == null) {
             OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
+                value = searchQuery,
+                onValueChange = onSearchQuery,
                 modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                 singleLine = true,
                 label = { Text(tr("Search customer by name or phone", "नाम या फ़ोन से ग्राहक खोजें")) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                trailingIcon = {
+                    IconButton(onClick = onPickContact) {
+                        Icon(Icons.Rounded.Contacts, contentDescription = tr("Choose from contacts", "कॉन्टैक्ट से चुनें"), tint = Teal)
+                    }
+                },
                 shape = RoundedCornerShape(14.dp)
             )
             LazyColumn(
@@ -89,7 +114,24 @@ fun CollectPaymentScreen(
                     }
                 }
                 if (matches.isEmpty()) item {
-                    Text(tr("No saved customer matches this search.", "इस खोज से कोई सहेजा ग्राहक नहीं मिला।"), color = Muted, modifier = Modifier.padding(8.dp))
+                    Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(tr("No saved customer matches this search.", "इस खोज से कोई सहेजा ग्राहक नहीं मिला।"), color = Muted)
+                        OutlinedButton(
+                            onClick = {
+                                val enteredDigits = CustomerCache.normalizePhone(searchQuery)
+                                newCustomerName = contactName
+                                newCustomerPhone = if (enteredDigits.length >= 8) searchQuery.trim() else contactPhone
+                                newCustomerEmail = ""
+                                newCustomerAddress = ""
+                                createCustomerError = null
+                                showCreateCustomer = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(tr("Create new customer", "नया ग्राहक बनाएँ"), color = Teal, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                 }
             }
         } else {
@@ -148,5 +190,80 @@ fun CollectPaymentScreen(
                 Text(tr("Save payment", "भुगतान सहेजें"), fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+    if (showCreateCustomer) {
+        AlertDialog(
+            onDismissRequest = { if (!creatingCustomer) showCreateCustomer = false },
+            title = { Text(tr("Add customer", "ग्राहक जोड़ें"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(tr("Create this customer, then continue to record their payment.", "ग्राहक बनाएँ, फिर उनका भुगतान दर्ज करें।"), color = Muted, fontSize = 14.sp)
+                    OutlinedTextField(
+                        value = newCustomerName,
+                        onValueChange = { newCustomerName = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(tr("Customer name", "ग्राहक का नाम")) },
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = newCustomerPhone,
+                        onValueChange = { newCustomerPhone = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(tr("Customer phone", "ग्राहक का फ़ोन")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = newCustomerEmail,
+                        onValueChange = { newCustomerEmail = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(tr("Email (optional)", "ईमेल (वैकल्पिक)")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = newCustomerAddress,
+                        onValueChange = { newCustomerAddress = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(tr("City or address (optional)", "शहर या पता (वैकल्पिक)")) },
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    createCustomerError?.let { Text(it, color = Color(0xFFB3261E), fontSize = 13.sp) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            creatingCustomer = true
+                            createCustomerError = null
+                            runCatching {
+                                onCreateCustomer(
+                                    newCustomerName.trim(), newCustomerPhone.trim(),
+                                    newCustomerEmail.trim(), newCustomerAddress.trim()
+                                )
+                            }.onSuccess { created ->
+                                customer = created
+                                amount = ""
+                                showCreateCustomer = false
+                            }.onFailure { error ->
+                                createCustomerError = error.message ?: "Could not create customer."
+                            }
+                            creatingCustomer = false
+                        }
+                    },
+                    enabled = !creatingCustomer && newCustomerName.isNotBlank() && CustomerCache.normalizePhone(newCustomerPhone).length >= 8
+                ) { Text(if (creatingCustomer) tr("Saving…", "सहेज रहे हैं…") else tr("Create customer", "ग्राहक बनाएँ")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateCustomer = false }, enabled = !creatingCustomer) {
+                    Text(tr("Cancel", "रद्द करें"))
+                }
+            }
+        )
     }
 }

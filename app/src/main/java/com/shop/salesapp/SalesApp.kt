@@ -114,6 +114,7 @@ import com.shop.salesapp.ui.bill.WhatsAppShareIcon
 import com.shop.salesapp.ui.common.AdminDeletionRequestsSection
 import com.shop.salesapp.ui.common.DetailLine
 import com.shop.salesapp.ui.common.ScreenHeader
+import com.shop.salesapp.ui.auth.LoginScreen
 import com.shop.salesapp.ui.customer.AddCustomerScreen
 import com.shop.salesapp.ui.customer.CustomerDetailScreen
 import com.shop.salesapp.ui.customer.CustomerDirectoryScreen
@@ -225,6 +226,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var hasLiveProducts by remember(context) { mutableStateOf(savedProducts.isNotEmpty()) }
     var selectedTab by remember { mutableIntStateOf(-1) }
     var query by remember { mutableStateOf("") }
+    var billShouldScrollToDiscount by remember { mutableStateOf(false) }
     var catalogQuery by remember { mutableStateOf("") }
     var selectedCatalogProduct by remember { mutableStateOf<Product?>(null) }
     var productSyncing by remember { mutableStateOf(false) }
@@ -239,18 +241,16 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var customerExists by remember { mutableStateOf<Boolean?>(null) }
     var customerSearching by remember { mutableStateOf(false) }
     var customerMatches by remember { mutableStateOf<List<ShopCustomer>>(emptyList()) }
-    var paymentMode by remember { mutableStateOf("Cash") }
+    var paymentMode by remember { mutableStateOf("") }
     var creditAmountReceived by remember { mutableStateOf("0") }
-    var creditPaymentMethod by remember { mutableStateOf("Cash") }
+    var creditPaymentMethod by remember { mutableStateOf("") }
     var billDiscountValue by remember { mutableStateOf("") }
     var billDiscountEnabled by remember { mutableStateOf(false) }
     var productName by remember { mutableStateOf("") }
+    var productSizeVariant by remember { mutableStateOf("") }
     var productCategory by remember { mutableStateOf("") }
     var productImageBase64 by remember { mutableStateOf("") }
     var productImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var productPhotoTargetSku by remember { mutableStateOf<String?>(null) }
-    var uploadingProductPhotoSku by remember { mutableStateOf<String?>(null) }
-    var pendingProductPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var sellingPrice by remember { mutableStateOf("") }
     var unitCost by remember { mutableStateOf("") }
     var openingStock by remember { mutableStateOf("") }
@@ -259,6 +259,9 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var productPricingUnit by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var userRole by remember { mutableStateOf("SALESPERSON") }
+    var isAuthenticated by remember { mutableStateOf(false) }
+    var checkingSession by remember { mutableStateOf(false) }
+    var signInError by remember { mutableStateOf<String?>(null) }
     var pendingDeletionTarget by remember { mutableStateOf<DeletionTarget?>(null) }
     var deletionReason by remember { mutableStateOf("Mistake") }
     var submittingDeletion by remember { mutableStateOf(false) }
@@ -273,12 +276,16 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var sharingBillNumber by remember { mutableStateOf<String?>(null) }
     var sharingCustomerDocument by remember { mutableStateOf(false) }
     var createdQrSku by remember { mutableStateOf<String?>(null) }
+    var signInReturnScreen by remember { mutableStateOf<Screen?>(null) }
     var qrPreviewProduct by remember { mutableStateOf<Product?>(null) }
     var savingInvoice by remember { mutableStateOf(false) }
     var savingCloth by remember { mutableStateOf(false) }
     var billsPhone by remember { mutableStateOf("") }
     var billsLoading by remember { mutableStateOf(false) }
     var paymentDirectoryQuery by remember { mutableStateOf("") }
+    var collectCustomerSearch by remember { mutableStateOf("") }
+    var collectContactName by remember { mutableStateOf("") }
+    var collectContactPhone by remember { mutableStateOf("") }
     var orderMode by remember { mutableStateOf(false) }
     var sendingOrderRequest by remember { mutableStateOf(false) }
     var orderRequests by remember { mutableStateOf<List<CustomerOrderRequest>>(emptyList()) }
@@ -307,6 +314,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     val products = remember(context) {
         mutableStateListOf<Product>().apply { addAll(savedProducts.ifEmpty { previewProducts }) }
     }
+    var printedQrSkus by remember(context) { mutableStateOf(QrLabelStatusStore.loadPrintedSkus(context)) }
     val cachedCustomers = remember(context) {
         mutableStateListOf<ShopCustomer>().apply { addAll(CustomerCache.load(context)) }
     }
@@ -327,6 +335,15 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         cachedCustomers.addAll(merged)
         CustomerCache.save(context, merged)
         return local
+    }
+
+    fun setQrLabelsPrinted(selectedProducts: List<Product>, printed: Boolean) {
+        val updated = printedQrSkus.toMutableSet()
+        selectedProducts.forEach { product ->
+            if (printed) updated.add(product.sku) else updated.remove(product.sku)
+        }
+        printedQrSkus = updated
+        QrLabelStatusStore.savePrintedSkus(context, updated)
     }
 
     suspend fun syncPendingCustomerUploads(token: String) {
@@ -361,6 +378,102 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         focusManager.clearFocus(force = true)
     }
 
+    fun saveOrderDraft() {
+        OrderFormDraftCache.save(
+            context,
+            OrderFormDraft(
+                customerName = customerName,
+                customerPhone = customerPhone,
+                customerEmail = customerEmail,
+                customerAddress = customerAddress,
+                items = cart.toList(),
+                customerConfirmed = customerExists == true
+            )
+        )
+    }
+
+    fun saveNewClothDraft() {
+        NewClothFormDraftCache.save(
+            context,
+            NewClothFormDraft(
+                name = productName,
+                sizeVariant = productSizeVariant,
+                category = productCategory,
+                price = sellingPrice,
+                cost = unitCost,
+                stock = openingStock,
+                fractionalQuantity = fractionalQuantity,
+                unit = productUnit,
+                pricingUnit = productPricingUnit,
+                photoBase64 = productImageBase64
+            )
+        )
+    }
+
+    fun persistCurrentDraft() {
+        when (screen) {
+            Screen.PlaceOrder -> saveOrderDraft()
+            Screen.AddProduct -> if (createdQrSku == null) saveNewClothDraft()
+            else -> Unit
+        }
+    }
+
+    fun restoreOrderDraft() {
+        val draft = OrderFormDraftCache.load(context)
+        customerPhone = draft?.customerPhone.orEmpty()
+        val normalizedDraftPhone = CustomerCache.normalizePhone(customerPhone)
+        val matchedCustomer = cachedCustomers.firstOrNull {
+            CustomerCache.normalizePhone(it.phone) == normalizedDraftPhone && normalizedDraftPhone.length >= 8
+        }
+        customerName = matchedCustomer?.name ?: draft?.customerName.orEmpty()
+        customerEmail = matchedCustomer?.email ?: draft?.customerEmail.orEmpty()
+        customerAddress = draft?.customerAddress.orEmpty()
+        cart.clear()
+        draft?.items?.let(cart::addAll)
+        customerExists = (matchedCustomer != null || draft?.customerConfirmed == true) && customerName.isNotBlank() &&
+            CustomerCache.normalizePhone(customerPhone).length >= 8
+        customerMatches = emptyList()
+        orderMode = true
+    }
+
+    fun restoreNewClothDraft() {
+        val draft = NewClothFormDraftCache.load(context)
+        productName = draft?.name.orEmpty()
+        productSizeVariant = draft?.sizeVariant.orEmpty()
+        productCategory = draft?.category.orEmpty()
+        sellingPrice = draft?.price.orEmpty()
+        unitCost = draft?.cost.orEmpty()
+        openingStock = draft?.stock.orEmpty()
+        fractionalQuantity = draft?.fractionalQuantity ?: false
+        productUnit = draft?.unit ?: "PIECE"
+        productPricingUnit = draft?.pricingUnit.orEmpty()
+        productImageBase64 = draft?.photoBase64.orEmpty()
+        productImageBitmap = runCatching {
+            if (productImageBase64.isBlank()) null else {
+                val bytes = Base64.decode(productImageBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        }.getOrNull()
+    }
+
+    LaunchedEffect(
+        screen, customerName, customerPhone, customerEmail, customerAddress, customerExists, cart.toList(),
+        productName, productSizeVariant, productCategory, sellingPrice, unitCost, openingStock,
+        fractionalQuantity, productUnit, productPricingUnit, productImageBase64, createdQrSku
+    ) {
+        when (screen) {
+            Screen.PlaceOrder -> {
+                delay(300)
+                saveOrderDraft()
+            }
+            Screen.AddProduct -> if (createdQrSku == null) {
+                delay(300)
+                saveNewClothDraft()
+            } else NewClothFormDraftCache.clear(context)
+            else -> Unit
+        }
+    }
+
     LaunchedEffect(screen) {
         if (screen != Screen.Payments) return@LaunchedEffect
         while (true) {
@@ -371,6 +484,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
 
     fun navigateTo(destination: Screen) {
         if (screen != destination) {
+            persistCurrentDraft()
             dismissKeyboard()
             backStack.add(screen)
             screen = destination
@@ -385,6 +499,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     }
 
     fun navigateBack() {
+        persistCurrentDraft()
         dismissKeyboard()
         screen = if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex) else Screen.Home
         selectedTab = when (screen) {
@@ -426,12 +541,33 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(ApiException::class.java)
         }.onSuccess { account ->
             idToken = account.idToken
-            if (account.idToken.isNullOrBlank()) message = "Google sign-in completed, but this build needs the server OAuth client ID."
-        }.onFailure { message = "Could not sign in. Try again or ask the manager to check access." }
+            if (account.idToken.isNullOrBlank()) {
+                signInError = "Google sign-in did not return a Shop token. Check the app's sign-in setup."
+                signInReturnScreen = null
+            } else {
+                signInError = null
+                isAuthenticated = false
+                signInReturnScreen?.let { destination ->
+                    signInReturnScreen = null
+                    backStack.clear()
+                    backStack.add(Screen.ProductCenter)
+                    screen = destination
+                    selectedTab = 2
+                }
+            }
+        }.onFailure {
+            signInError = "Could not sign in. Try again or ask the manager to check access."
+            signInReturnScreen = null
+        }
     }
 
-    fun beginSignIn() {
+    fun beginSignIn(returnTo: Screen? = null) {
         if (signingIn) return
+        if (returnTo == Screen.AddProduct) saveNewClothDraft()
+        signInError = null
+        isAuthenticated = false
+        checkingSession = false
+        signInReturnScreen = returnTo
         dismissKeyboard()
         signingIn = true
         idToken = null
@@ -484,8 +620,12 @@ internal fun SalesApp(operationScope: CoroutineScope) {
 
     LaunchedEffect(customerPhone, idToken, api.isConfigured) {
         customerSearching = false
-        customerExists = null
         val digits = CustomerCache.normalizePhone(customerPhone)
+        if (customerExists == true && customerName.isNotBlank() && digits.length >= 8) {
+            customerMatches = emptyList()
+            return@LaunchedEffect
+        }
+        customerExists = null
         customerMatches = if (digits.length >= 3) cachedCustomers
             .filter { CustomerCache.normalizePhone(it.phone).startsWith(digits) }
             .take(8) else emptyList()
@@ -505,6 +645,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         delay(350)
         runCatchingCancellable { withContext(Dispatchers.IO) { api.searchCustomers(token, customerPhone) } }
             .onSuccess { downloaded ->
+                if (customerExists == true && customerName.isNotBlank()) return@onSuccess
                 val merged = CustomerCache.merge(cachedCustomers.toList(), downloaded)
                 cachedCustomers.clear()
                 cachedCustomers.addAll(merged)
@@ -529,7 +670,9 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     customerMatches = matches
                 }
             }
-            .onFailure { message = it.message ?: "Could not search customers." }
+            .onFailure {
+                if (customerExists != true || customerName.isBlank()) message = it.message ?: "Could not search customers."
+            }
         customerSearching = false
     }
 
@@ -635,109 +778,33 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 newCustomerPhone = phone
             } else if (screen == Screen.Payments) {
                 paymentDirectoryQuery = phone
+            } else if (screen == Screen.CollectPayment) {
+                collectCustomerSearch = phone
+                collectContactName = name
+                collectContactPhone = phone
             } else customerPhone = phone
         }.onFailure { message = "Could not read the selected phone number. You can type it instead." }
     }
 
-    fun processProductPhoto(original: Bitmap) {
-        runCatching {
-            val scale = minOf(1f, 900f / maxOf(original.width, original.height))
-            val resized = if (scale < 1f) Bitmap.createScaledBitmap(original, (original.width * scale).toInt().coerceAtLeast(1), (original.height * scale).toInt().coerceAtLeast(1), true) else original
-            val output = java.io.ByteArrayOutputStream()
-            var quality = 82
-            do {
-                output.reset()
-                resized.compress(Bitmap.CompressFormat.JPEG, quality, output)
-                quality -= 8
-            } while (output.size() > 110_000 && quality >= 42)
-            Triple(Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP), resized, original)
-        }.onSuccess { (imageBase64, resized, originalBitmap) ->
-            productImageBase64 = imageBase64
-            productImageBitmap = resized
-            if (resized !== originalBitmap) originalBitmap.recycle()
-            val targetSku = productPhotoTargetSku
-            if (targetSku != null) {
-                productPhotoTargetSku = null
-                val token = idToken
-                if (token == null || !api.isConfigured) {
-                    message = "Sign in to Shop before saving a product picture."
-                } else if (uploadingProductPhotoSku == null) {
-                    operationScope.launch {
-                        uploadingProductPhotoSku = targetSku
-                        runCatchingCancellable {
-                            withContext(Dispatchers.IO) { api.updateProductImage(token, targetSku, imageBase64) }
-                        }.onSuccess { imageId ->
-                            if (imageId.isBlank()) {
-                                message = "Shop did not save the product picture. Try again."
-                            } else {
-                                withContext(Dispatchers.IO) {
-                                    ProductImageCache.save(context, targetSku, imageId, Base64.decode(imageBase64, Base64.DEFAULT))
-                                }
-                                val updated = products.map { product ->
-                                    if (product.sku == targetSku) product.copy(imageId = imageId) else product
-                                }
-                                products.clear()
-                                products.addAll(updated)
-                                ProductCache.save(context, updated)
-                                selectedCatalogProduct = updated.firstOrNull { it.sku == targetSku } ?: selectedCatalogProduct
-                                message = "Product picture saved to Shop."
-                            }
-                        }.onFailure { message = it.message ?: "Could not save this product picture." }
-                        uploadingProductPhotoSku = null
-                    }
-                }
-            }
-        }.onFailure {
-            productPhotoTargetSku = null
-            message = it.message ?: "Could not use this picture."
-        }
-    }
-
-    val productPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) {
-            productPhotoTargetSku = null
-        } else {
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-                    ?: throw IllegalStateException("Could not open this picture.")
-            }.onSuccess(::processProductPhoto).onFailure {
-                productPhotoTargetSku = null
-                message = it.message ?: "Could not use this picture."
-            }
-        }
-    }
-
-    val productCamera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
-        val uri = pendingProductPhotoUri
-        pendingProductPhotoUri = null
-        if (!saved || uri == null) {
-            productPhotoTargetSku = null
-            if (!saved) message = "The picture was not captured. Try again."
-        } else {
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-                    ?: throw IllegalStateException("Could not open the captured picture.")
-            }.onSuccess(::processProductPhoto).onFailure {
-                productPhotoTargetSku = null
-                message = it.message ?: "Could not use the captured picture."
-            }
-        }
-    }
-
-    fun takeProductPhoto() {
-        runCatching {
-            val directory = File(context.cacheDir, "product-captures")
-            if (!directory.exists() && !directory.mkdirs()) throw IllegalStateException("Could not prepare the camera picture.")
-            val output = File.createTempFile("product_", ".jpg", directory)
-            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", output)
-        }.onSuccess { uri ->
-            pendingProductPhotoUri = uri
-            productCamera.launch(uri)
-        }.onFailure {
-            productPhotoTargetSku = null
-            message = it.message ?: "Could not open the camera."
-        }
-    }
+    val productPhotoActions = rememberProductPhotoActions(
+        context = context,
+        operationScope = operationScope,
+        api = api,
+        idToken = idToken,
+        products = products,
+        onFormImageSelected = { base64, bitmap ->
+            productImageBase64 = base64
+            productImageBitmap = bitmap
+        },
+        onProductsUpdated = { updated ->
+            products.clear()
+            products.addAll(updated)
+        },
+        onCatalogProductUpdated = { updated ->
+            if (updated != null) selectedCatalogProduct = updated
+        },
+        onMessage = { message = it }
+    )
 
     val scanner = remember {
         GmsBarcodeScanning.getClient(
@@ -1032,6 +1099,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     fun updateClothDetails(
         product: Product,
         name: String,
+        sizeVariant: String,
         category: String,
         price: Int,
         fractionalQuantity: Boolean,
@@ -1047,7 +1115,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         operationScope.launch {
             runCatchingCancellable {
                 withContext(Dispatchers.IO) {
-                    api.updateProduct(token, product.sku, name, category, price, fractionalQuantity, unit)
+                    api.updateProduct(token, product.sku, name, category, price, fractionalQuantity, unit, sizeVariant)
                     api.products(token, "")
                 }
             }.onSuccess { fresh ->
@@ -1092,11 +1160,30 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     }
 
     LaunchedEffect(idToken, api.isConfigured) {
+        isAuthenticated = false
         userRole = "SALESPERSON"
-        val token = idToken ?: return@LaunchedEffect
-        if (!api.isConfigured) return@LaunchedEffect
+        val token = idToken
+        if (token == null || !api.isConfigured) {
+            checkingSession = false
+            return@LaunchedEffect
+        }
+        checkingSession = true
         runCatchingCancellable { withContext(Dispatchers.IO) { api.session(token) } }
-            .onSuccess { userRole = it.role }
+            .onSuccess {
+                if (idToken == token) {
+                    userRole = it.role
+                    isAuthenticated = true
+                    signInError = null
+                }
+            }
+            .onFailure {
+                if (idToken == token) {
+                    idToken = null
+                    signInReturnScreen = null
+                    signInError = "Could not verify your Shop sign-in. Please sign in again."
+                }
+            }
+        checkingSession = false
     }
 
     LaunchedEffect(screen, userRole, idToken, api.isConfigured) {
@@ -1309,6 +1396,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 }
             }.onSuccess { request ->
                 CustomerHistoryCache.invalidate(context, requestCustomer.phone)
+                OrderFormDraftCache.clear(context)
                 if (isNewCustomer) {
                     val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(requestCustomer))
                     cachedCustomers.clear(); cachedCustomers.addAll(merged); CustomerCache.save(context, merged)
@@ -1363,10 +1451,19 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 fontScale = baseDensity.fontScale * responsiveScale
             )
         ) {
+        if (!isAuthenticated) {
+            LoginScreen(
+                apiConfigured = api.isConfigured,
+                signingIn = signingIn,
+                checkingSession = checkingSession,
+                errorMessage = signInError,
+                onSignIn = { beginSignIn() }
+            )
+        } else {
         Scaffold(
             containerColor = Paper,
             topBar = {
-                if (savingInvoice || savingCloth || receivingPayment || savingCustomer || sendingOrderRequest) {
+                if (savingCloth || receivingPayment || savingCustomer || sendingOrderRequest) {
                     Surface(color = SoftBlue, modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
@@ -1385,56 +1482,18 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 }
             },
             bottomBar = {
-        if (screen in setOf(Screen.Home, Screen.BillCenter, Screen.Customer, Screen.ProductCenter)) {
-                    NavigationBar(containerColor = Color.White) {
-                        val navColors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Ink,
-                            selectedTextColor = Ink,
-                            indicatorColor = ClothActionBlue,
-                            unselectedIconColor = Muted,
-                            unselectedTextColor = Muted
-                        )
-                        NavigationBarItem(
-                            selected = screen == Screen.Home,
-                            onClick = { backStack.clear(); selectedTab = -1; screen = Screen.Home },
-                            icon = { Icon(Icons.Rounded.Home, contentDescription = null) },
-                            label = { Text(if (isHindi) "होम" else "Home", fontSize = 13.sp) },
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == 0,
-                            onClick = { backStack.clear(); selectedTab = 0; screen = Screen.BillCenter },
-                            icon = { Icon(Icons.AutoMirrored.Rounded.ReceiptLong, contentDescription = null) },
-                            label = { Text(if (isHindi) "बिल" else "Bill", fontSize = 13.sp) },
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == 1,
-                            onClick = { backStack.clear(); selectedTab = 1; screen = Screen.Customer },
-                            icon = { Icon(Icons.Rounded.Contacts, contentDescription = null) },
-                            label = { Text(if (isHindi) "ग्राहक" else "Customer", fontSize = 13.sp) },
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == 2,
-                            onClick = { backStack.clear(); selectedTab = 2; screen = Screen.ProductCenter },
-                            icon = { Icon(Icons.Rounded.Inventory2, contentDescription = null) },
-                            label = { Text(if (isHindi) "कपड़ा" else "Cloth", fontSize = 13.sp) },
-                            colors = navColors
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == 3,
-                            onClick = { backStack.clear(); selectedTab = 3; screen = Screen.Payments },
-                            icon = {
-                                BadgedBox(badge = {
-                                    if (pendingPaymentSyncCount > 0) Badge { Text(if (pendingPaymentSyncCount > 9) "9+" else pendingPaymentSyncCount.toString()) }
-                                }) { Icon(Icons.Rounded.AccountBalanceWallet, contentDescription = null) }
-                            },
-                            label = { Text(if (isHindi) "खाता" else "Khata", fontSize = 13.sp) },
-                            colors = navColors
-                        )
+                SalesAppNavigationBar(
+                    screen = screen,
+                    selectedTab = selectedTab,
+                    isHindi = isHindi,
+                    pendingPaymentSyncCount = pendingPaymentSyncCount,
+                    onSelect = { destination, tab ->
+                        persistCurrentDraft()
+                        backStack.clear()
+                        selectedTab = tab
+                        screen = destination
                     }
-                }
+                )
             }
         ) { insets ->
             when (screen) {
@@ -1451,41 +1510,47 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             .edit().putBoolean("use_hindi", hindi).apply()
                     },
                     onSignIn = { beginSignIn() },
-                    onNewBill = { orderMode = false; billDiscountValue = ""; billDiscountEnabled = false; navigateTo(Screen.Bill) },
+                    onNewBill = {
+                        orderMode = false
+                        cart.clear()
+                        customerName = ""; customerPhone = ""; customerEmail = ""; customerAddress = ""
+                        customerExists = null; customerMatches = emptyList()
+                        paymentMode = ""; creditAmountReceived = "0"; creditPaymentMethod = ""; billDiscountValue = ""; billDiscountEnabled = false
+                        navigateTo(Screen.Bill)
+                    },
                     onMakePayment = { navigateTo(Screen.CollectPayment) },
                     onCatalog = { selectedTab = 2; navigateTo(Screen.Catalog) },
                     onAddProduct = {
-                        productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
-                        productImageBase64 = ""; productImageBitmap = null
+                        restoreNewClothDraft()
                         navigateTo(Screen.AddProduct)
                     },
                     onPlaceOrder = {
-                        orderMode = true
-                        cart.clear()
-                        customerPhone = ""; customerName = ""; customerEmail = ""; customerAddress = ""
-                        customerExists = null; customerMatches = emptyList()
+                        restoreOrderDraft()
                         navigateTo(Screen.PlaceOrder)
                     }
                 )
                 Screen.BillCenter -> BillCenterScreen(
                     padding = insets,
-                    onCreateBill = { orderMode = false; billDiscountValue = ""; billDiscountEnabled = false; navigateTo(Screen.Bill) },
+                    onCreateBill = {
+                        orderMode = false
+                        cart.clear()
+                        customerName = ""; customerPhone = ""; customerEmail = ""; customerAddress = ""
+                        customerExists = null; customerMatches = emptyList()
+                        paymentMode = ""; creditAmountReceived = "0"; creditPaymentMethod = ""; billDiscountValue = ""; billDiscountEnabled = false
+                        navigateTo(Screen.Bill)
+                    },
                     onFindBill = { billsPhone = ""; navigateTo(Screen.Bills) }
                 )
                 Screen.ProductCenter -> ProductCenterScreen(
                     padding = insets,
                     onAddProduct = {
-                        productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
-                        productImageBase64 = ""; productImageBitmap = null
+                        restoreNewClothDraft()
                         navigateTo(Screen.AddProduct)
                     },
                     onCatalog = { navigateTo(Screen.Catalog) },
                     onViewOrderRequests = { navigateTo(Screen.OrderRequests); syncOrderRequests() },
                     onPlaceOrder = {
-                        orderMode = true
-                        cart.clear()
-                        customerPhone = ""; customerName = ""; customerEmail = ""; customerAddress = ""
-                        customerExists = null; customerMatches = emptyList()
+                        restoreOrderDraft()
                         navigateTo(Screen.PlaceOrder)
                     }
                 )
@@ -1603,6 +1668,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         val step = if (product.fractionalQuantity) 0.1 else 1.0
                         if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
                         else cart.add(CartLine(product, if (orderMode) step else minOf(step, product.stock)))
+                        if (!orderMode) billShouldScrollToDiscount = true
                         if (orderMode) {
                             navigateBack()
                         } else {
@@ -1618,6 +1684,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     connected = api.isConfigured && idToken != null,
                     saving = savingCloth,
                     name = productName,
+                    sizeVariant = productSizeVariant,
                     category = productCategory,
                     price = sellingPrice,
                     cost = unitCost,
@@ -1626,9 +1693,10 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     unit = productUnit,
                     pricingUnit = productPricingUnit,
                     photo = productImageBitmap,
-                    onTakePhoto = { takeProductPhoto() },
-                    onChoosePhoto = { productPhotoPicker.launch("image/*") },
+                    onTakePhoto = { productPhotoActions.takePhoto() },
+                    onChoosePhoto = { productPhotoActions.choosePhoto() },
                     onName = { productName = it },
+                    onSizeVariant = { productSizeVariant = it },
                     onCategory = { productCategory = it },
                     onPrice = { sellingPrice = it },
                     onCost = { unitCost = it },
@@ -1641,18 +1709,35 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         if (unit != "PIECE") productPricingUnit = ""
                     },
                     onBack = { navigateBack() },
+                    onClear = {
+                        productName = ""
+                        productSizeVariant = ""
+                        productCategory = ""
+                        sellingPrice = ""
+                        unitCost = ""
+                        openingStock = ""
+                        fractionalQuantity = false
+                        productUnit = "PIECE"
+                        productPricingUnit = ""
+                        productImageBase64 = ""
+                        productImageBitmap = null
+                        NewClothFormDraftCache.clear(context)
+                    },
                     onSave = {
                         val token = idToken
-                        if (!api.isConfigured || token == null) message = "Connect the Shop API and sign in before saving clothes."
+                        if (!api.isConfigured) message = "Connect the Shop API before saving clothes."
+                        else if (productCategory.isBlank()) message = "Choose a category before saving this cloth."
+                        else if (token == null) beginSignIn(returnTo = Screen.AddProduct)
                         else if (!savingCloth) operationScope.launch {
                             savingCloth = true
                             try {
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
-                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit)
+                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit, productSizeVariant)
                                     }
                                 }.onSuccess { created ->
-                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit)
+                                    NewClothFormDraftCache.clear(context)
+                                    val newProduct = Product(created.sku, created.name, productCategory, created.price, created.stock, created.imageId, true, created.fractionalQuantity, created.unit, created.pricingUnit, created.sizeVariant)
                                     val merged = ProductCache.merge(products.toList(), listOf(newProduct))
                                     products.clear()
                                     products.addAll(merged)
@@ -1669,6 +1754,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 )
                 Screen.Bill, Screen.PlaceOrder -> BillScreen(
                     padding = insets,
+                    shouldScrollToDiscount = billShouldScrollToDiscount,
+                    onDiscountScrollComplete = { billShouldScrollToDiscount = false },
                     connected = api.isConfigured && idToken != null,
                     orderMode = screen == Screen.PlaceOrder,
                     customerName = customerName,
@@ -1719,7 +1806,13 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             if (token != null && api.isConfigured) operationScope.launch { syncPendingCustomerUploads(token) }
                         }
                     },
-                    onPaymentMode = { paymentMode = it },
+                    onPaymentMode = { mode ->
+                        if (mode == "Credit" && paymentMode != "Credit") {
+                            creditAmountReceived = "0"
+                            creditPaymentMethod = ""
+                        }
+                        paymentMode = mode
+                    },
                     onDiscountValue = { billDiscountValue = it },
                     onDiscountEnabled = { enabled ->
                         billDiscountEnabled = enabled
@@ -1782,6 +1875,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     },
                     onFindProduct = {
                         orderMode = screen == Screen.PlaceOrder
+                        query = ""
                         selectedTab = 2
                         navigateTo(Screen.Search)
                     },
@@ -1803,6 +1897,10 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onSetMeasureQuantity = { sku, measure ->
                         val index = cart.indexOfFirst { it.product.sku == sku }
                         if (index >= 0) cart[index] = cart[index].copy(measureQuantity = measure)
+                    },
+                    onSetUnitPrice = { sku, price ->
+                        val index = cart.indexOfFirst { it.product.sku == sku }
+                        if (index >= 0 && price > 0) cart[index] = cart[index].copy(unitPrice = price)
                     },
                     onSave = {
                         if (screen == Screen.PlaceOrder) {
@@ -1848,7 +1946,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                                 name = line.product.name,
                                                 category = line.product.category,
                                                 quantity = line.quantity,
-                                                unitPrice = line.product.price,
+                                                unitPrice = line.unitPrice,
                                                 discount = 0,
                                                 lineTotal = cartLineAmount(line),
                                                 fractionalQuantity = line.product.fractionalQuantity,
@@ -1876,8 +1974,9 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                     customerAddress = ""
                                     customerExists = null
                                     customerMatches = emptyList()
-                                    paymentMode = "Cash"
+                                    paymentMode = ""
                                     creditAmountReceived = "0"
+                                    creditPaymentMethod = ""
                                     billDiscountValue = ""
                                     billDiscountEnabled = false
                                 }.onFailure { message = it.message ?: "Could not save the bill." }
@@ -1886,7 +1985,28 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         }
                         }
                     },
-                    onBack = { navigateBack() }
+                    onBack = { navigateBack() },
+                    onClear = {
+                        if (screen == Screen.PlaceOrder) OrderFormDraftCache.clear(context)
+                        cart.clear()
+                        customerName = ""
+                        customerPhone = ""
+                        customerEmail = ""
+                        customerAddress = ""
+                        customerExists = null
+                        customerMatches = emptyList()
+                        paymentMode = ""
+                        creditAmountReceived = "0"
+                        creditPaymentMethod = ""
+                        billDiscountValue = ""
+                        billDiscountEnabled = false
+                        query = ""
+                        catalogQuery = ""
+                        newCustomerName = ""
+                        newCustomerPhone = ""
+                        newCustomerEmail = ""
+                        newCustomerAddress = ""
+                    }
                 )
                 Screen.Bills -> BillsScreen(
                     padding = insets,
@@ -1968,12 +2088,52 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             ?: ShopCustomer("", payment.customerName, payment.customerPhone, "")
                         syncPayment(customer, payment)
                     },
-                    onStartCollect = { navigateTo(Screen.CollectPayment) }
+                    onStartCollect = {
+                        collectCustomerSearch = ""
+                        collectContactName = ""
+                        collectContactPhone = ""
+                        navigateTo(Screen.CollectPayment)
+                    }
                 )
                 Screen.CollectPayment -> CollectPaymentScreen(
                     padding = insets,
                     customers = cachedCustomers,
+                    searchQuery = collectCustomerSearch,
+                    contactName = collectContactName,
+                    contactPhone = collectContactPhone,
+                    onSearchQuery = { query ->
+                        collectCustomerSearch = query
+                        collectContactName = ""
+                        collectContactPhone = ""
+                    },
+                    onPickContact = { contactPicker.launch(Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)) },
                     onBack = { navigateBack() },
+                    onCreateCustomer = { name, phone, email, address ->
+                        val normalizedPhone = CustomerCache.normalizePhone(phone)
+                        val cachedMatch = cachedCustomers.firstOrNull {
+                            CustomerCache.normalizePhone(it.phone) == normalizedPhone
+                        }
+                        if (cachedMatch != null) {
+                            cachedMatch
+                        } else {
+                            val token = idToken
+                            val savedToShop = token != null && api.isConfigured
+                            val customer = if (savedToShop) {
+                                val signedInToken = requireNotNull(token)
+                                withContext(Dispatchers.IO) {
+                                    api.findCustomer(signedInToken, phone) ?: api.createCustomer(signedInToken, name, phone, email, address)
+                                }
+                            } else {
+                                cacheCustomerImmediately(name, phone, email, address)
+                            }
+                            val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(customer))
+                            cachedCustomers.clear()
+                            cachedCustomers.addAll(merged)
+                            CustomerCache.save(context, merged)
+                            if (savedToShop) CustomerCache.removePending(context, phone)
+                            customer
+                        }
+                    },
                     onSubmit = { customer, amount, method, note ->
                         val local = newLocalPayment("", amount, method, note, customer)
                         LocalPaymentLog.save(context, customer.phone, local)
@@ -1996,6 +2156,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onSync = { syncProductsFromShop() },
                     isAdministrator = isAdministrator,
                     requests = productDeletionRequests,
+                    printedQrSkus = printedQrSkus,
+                    onQrPrintedChange = ::setQrLabelsPrinted,
                     onRequestDeletion = { product -> requestEntryDeletion("PRODUCT", product.sku, product.name) },
                     onReviewRequest = { request, approve -> reviewEntryDeletionRequest("PRODUCT", request, approve) },
                     onAvailabilityChange = { product, available -> setClothAvailability(product, available) },
@@ -2018,18 +2180,18 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         product = product,
                         isAdministrator = isAdministrator,
                         connected = api.isConfigured && idToken != null,
-                        uploading = uploadingProductPhotoSku == product.sku,
+                        uploading = productPhotoActions.uploadingSku.value == product.sku,
                         imageLoader = { id ->
                             val token = idToken ?: return@ProductDetailScreen null
                             runCatchingCancellable { withContext(Dispatchers.IO) { api.productImage(token, id) } }.getOrNull()
                         },
                         onTakePhoto = {
                             if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
-                            else { productPhotoTargetSku = product.sku; takeProductPhoto() }
+                            else { productPhotoActions.setTargetSku(product.sku); productPhotoActions.takePhoto() }
                         },
                         onChoosePhoto = {
                             if (!api.isConfigured || idToken == null) message = "Sign in to Shop before saving a product picture."
-                            else { productPhotoTargetSku = product.sku; productPhotoPicker.launch("image/*") }
+                            else { productPhotoActions.setTargetSku(product.sku); productPhotoActions.choosePhoto() }
                         },
                         onAvailabilityChange = { setClothAvailability(product, it) },
                         onAddStock = { quantity, reason, complete -> addStockToCloth(product, quantity, reason, complete) },
@@ -2040,186 +2202,66 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             } else requestEntryDeletion("PRODUCT", product.sku, product.name)
                         },
                         onProductQr = { qrPreviewProduct = product },
-                        onEdit = { name, category, price, fractional, unit, complete ->
-                            updateClothDetails(product, name, category, price, fractional, unit, complete)
+                        onEdit = { name, sizeVariant, category, price, fractional, unit, complete ->
+                            updateClothDetails(product, name, sizeVariant, category, price, fractional, unit, complete)
                         },
                         onBack = { navigateBack() }
                     )
                 }
             }
         }
-        message?.let { text ->
-            val savedBill = latestInvoice
-            if (savedBill != null) {
-                androidx.compose.material3.AlertDialog(
-                    onDismissRequest = { latestPdfUrl = ""; latestInvoice = null; message = null },
-                    icon = {
-                        Surface(shape = CircleShape, color = Color(0xFFDDF5E4), modifier = Modifier.size(58.dp)) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF20A05A), modifier = Modifier.size(36.dp))
-                            }
-                        }
-                    },
-                    title = { Text(tr("Bill saved", "बिल सेव हो गया"), fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink) },
-                    text = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                when {
-                                    savedBill.number in invoicePdfPreparingNumbers -> tr("Creating the PDF on this phone…", "फ़ोन पर PDF बनाई जा रही है…")
-                                    else -> tr("Bill saved. PDF will be created when you open or share it.", "बिल सेव हो गया। PDF खोलने या साझा करने पर बनाई जाएगी।")
-                                },
-                                fontSize = 16.sp,
-                                color = Muted
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Surface(color = Color(0xFFEAF3EF), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(tr("Bill total", "बिल कुल"), modifier = Modifier.weight(1f), fontSize = 16.sp, color = Ink)
-                                        Text("₹${savedBill.total}", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Ink)
-                                    }
-                                    Text(savedBill.number, modifier = Modifier.padding(top = 7.dp), fontSize = 14.sp, color = Ink)
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = { openBillPdf(savedBill) },
-                                enabled = savedBill.number !in invoicePdfPreparingNumbers && sharingBillNumber != savedBill.number,
-                                modifier = Modifier.fillMaxWidth().height(56.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Teal)
-                            ) {
-                                Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null)
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    if (savedBill.number in invoicePdfPreparingNumbers) tr("Creating PDF…", "PDF बनाई जा रही है…") else tr("Open PDF", "PDF खोलें"),
-                                    fontSize = 17.sp, fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Spacer(Modifier.height(10.dp))
-                            OutlinedButton(
-                                onClick = { shareBillPdf(savedBill) },
-                                enabled = sharingBillNumber == null && savedBill.number !in invoicePdfPreparingNumbers,
-                                modifier = Modifier.fillMaxWidth().height(56.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                border = BorderStroke(1.5.dp, Teal)
-                            ) {
-                                WhatsAppShareIcon(sharing = sharingBillNumber == savedBill.number)
-                                Spacer(Modifier.width(10.dp))
-                                Text(tr("Share on WhatsApp", "WhatsApp पर साझा करें"), color = Teal, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Spacer(Modifier.weight(1f))
-                                TextButton(onClick = { latestPdfUrl = ""; latestInvoice = null; message = null }, modifier = Modifier.padding(top = 4.dp)) {
-                                    Text(tr("Done", "हो गया"), color = Teal, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    },
-                    containerColor = Color.White,
-                    shape = RoundedCornerShape(26.dp)
-                )
-            } else {
-                androidx.compose.material3.AlertDialog(
-                    onDismissRequest = { message = null },
-                    title = { Text(tr("Avani Suto", "अवनि सूतो")) },
-                    text = { Text(localizedAppMessage(text, isHindi), fontSize = 17.sp) },
-                    confirmButton = { TextButton(onClick = { message = null }) { Text(tr("OK", "ठीक है")) } }
-                )
+        if (savingInvoice) SalesAppSavingDialog()
+        SalesAppMessageDialog(
+            message = message,
+            isHindi = isHindi,
+            latestInvoice = latestInvoice,
+            invoicePdfPreparingNumbers = invoicePdfPreparingNumbers,
+            sharingBillNumber = sharingBillNumber,
+            onDismiss = { latestPdfUrl = ""; latestInvoice = null; message = null },
+            onDone = {
+                latestPdfUrl = ""
+                latestInvoice = null
+                message = null
+                backStack.clear()
+                screen = Screen.Home
+                selectedTab = -1
+            },
+            onShareBillPdf = ::shareBillPdf,
+            onRequestBillCancellation = { bill ->
+                latestPdfUrl = ""
+                latestInvoice = null
+                message = null
+                requestEntryDeletion("BILL", bill.number, "${bill.number} · ${bill.customerName} · ₹${bill.total}")
             }
-        }
-        pendingDeletionTarget?.let { target ->
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { if (!submittingDeletion) pendingDeletionTarget = null },
-                title = {
-                    Text(when (target.type) {
-                        "BILL" -> tr("Request bill cancellation", "बिल रद्द करने का अनुरोध")
-                        "ORDER" -> tr("Request order cancellation", "ऑर्डर रद्द करने का अनुरोध")
-                        else -> tr("Request deletion", "हटाने का अनुरोध")
-                    })
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(target.summary, color = Ink, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            if (target.type == "BILL" || target.type == "ORDER") tr("The administrator will review this cancellation.", "प्रशासक इस रद्दीकरण की समीक्षा करेंगे।")
-                            else tr("The administrator will review this request.", "मैनेजर इस अनुरोध की समीक्षा करेंगे।"),
-                            color = Muted
-                        )
-                        OutlinedTextField(
-                            value = deletionReason,
-                            onValueChange = { deletionReason = it.take(500) },
-                            label = { Text(tr("Reason", "कारण")) },
-                            minLines = 2,
-                            maxLines = 4,
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { submitEntryDeletionRequest() }, enabled = !submittingDeletion && deletionReason.trim().length >= 4) {
-                        if (submittingDeletion) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Text(tr("Send request", "अनुरोध भेजें"))
-                    }
-                },
-                dismissButton = { TextButton(onClick = { pendingDeletionTarget = null }, enabled = !submittingDeletion) { Text(tr("Cancel", "रद्द करें")) } }
-            )
-        }
-        createdQrSku?.let { sku ->
-            val qrBitmap = remember(sku) { createQrBitmap(sku).asImageBitmap() }
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = {
-                    createdQrSku = null
-                    productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
-                    backStack.clear(); selectedTab = 0; screen = Screen.Home
-                },
-                title = { Text(tr("QR label ready", "QR लेबल तैयार है")) },
-                text = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Image(qrBitmap, contentDescription = "QR code for $sku", modifier = Modifier.size(220.dp))
-                        Text("$sku", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Ink)
-                        Text(tr("Stick this code on the cloth.", "इस कोड को कपड़े पर चिपकाएँ।"), fontSize = 15.sp, color = Muted)
-                    }
-                },
-                confirmButton = {
-                    Row {
-                        TextButton(onClick = {
-                            val product = products.firstOrNull { it.sku == sku }
-                            if (product == null) message = "Cloth saved, but it is not in the local list yet. Use Find a cloth to print its QR label."
-                            else shareQrLabelPdf(listOf(product))
-                        }) { Text(tr("Print QR labels", "QR लेबल प्रिंट करें")) }
-                        TextButton(onClick = {
-                            createdQrSku = null
-                            productName = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
-                            backStack.clear(); selectedTab = 0; screen = Screen.Home
-                        }) { Text(tr("Done", "हो गया")) }
-                    }
-                }
-            )
-        }
-        qrPreviewProduct?.let { product ->
-            val qrBitmap = remember(product.sku) { createQrBitmap(product.sku).asImageBitmap() }
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { qrPreviewProduct = null },
-                title = { Text(tr("Cloth QR label", "कपड़े का QR लेबल")) },
-                text = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Image(qrBitmap, contentDescription = "QR code for ${product.name}", modifier = Modifier.size(190.dp))
-                        Text(product.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Text(product.sku, color = Muted, fontSize = 15.sp)
-                        Text(tr("Print on PSF-20 label roll (48 × 26 mm). Label includes QR, name, price and SKU.", "PSF-20 लेबल रोल (48 × 26 मिमी) पर प्रिंट करें। लेबल में QR, नाम, कीमत और SKU होगा।"), color = Muted, fontSize = 14.sp)
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { shareQrLabelPdf(listOf(product)) }) { Text(tr("Print QR label", "QR लेबल प्रिंट करें")) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { qrPreviewProduct = null }) { Text(tr("Close", "बंद करें")) }
-                }
-            )
+        )
+        SalesAppDeletionDialog(
+            target = pendingDeletionTarget,
+            submitting = submittingDeletion,
+            reason = deletionReason,
+            onDismiss = { pendingDeletionTarget = null },
+            onReasonChange = { deletionReason = it },
+            onSubmit = ::submitEntryDeletionRequest
+        )
+        SalesAppQrDialogs(
+            createdQrSku = createdQrSku,
+            previewProduct = qrPreviewProduct,
+            products = products,
+            onFinishProductCreation = {
+                NewClothFormDraftCache.clear(context)
+                createdQrSku = null
+                productName = ""; productSizeVariant = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
+                backStack.clear(); selectedTab = 0; screen = Screen.Home
+            },
+            onCreatedQrProductMissing = {
+                message = "Cloth saved, but it is not in the local list yet. Use Find a cloth to print its QR label."
+            },
+            onPrintQrLabel = { product ->
+                createdQrSku = null
+                qrPreviewProduct = null
+                shareQrLabelPdf(listOf(product))
+            },
+            onClosePreview = { qrPreviewProduct = null }
+        )
         }
         }
     }

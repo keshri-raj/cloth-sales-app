@@ -117,5 +117,6 @@ object BillCache {
         number.isNotBlank() &&
             CustomerCache.normalizePhone(phone).length >= 8 &&
             total > 0 &&
-            paymentMode.trim() in setOf("Cash", "UPI", "Card", "Credit")
+            paymentMode.trim() in setOf("Cash", "UPI", "Card", "Credit") &&
+            items.all { it.quantity.isFinite() && it.measureQuantity.isFinite() }
 }

@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -77,6 +78,7 @@ fun AddProductScreen(
     connected: Boolean,
     saving: Boolean,
     name: String,
+    sizeVariant: String,
     category: String,
     price: String,
     cost: String,
@@ -88,6 +90,7 @@ fun AddProductScreen(
     onTakePhoto: () -> Unit,
     onChoosePhoto: () -> Unit,
     onName: (String) -> Unit,
+    onSizeVariant: (String) -> Unit,
     onCategory: (String) -> Unit,
     onPrice: (String) -> Unit,
     onCost: (String) -> Unit,
@@ -96,15 +99,19 @@ fun AddProductScreen(
     onUnit: (String) -> Unit,
     onPricingUnit: (String) -> Unit,
     onBack: () -> Unit,
+    onClear: () -> Unit,
     onSave: () -> Unit
 ) {
     var categoryPickerOpen by remember { mutableStateOf(false) }
     var categorySearch by remember { mutableStateOf("") }
+    var showClearConfirmation by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val photoHeight = (screenHeightDp * 0.16f).coerceIn(108f, 132f).dp
     val priceFocus = remember { FocusRequester() }
     val costFocus = remember { FocusRequester() }
     val stockFocus = remember { FocusRequester() }
@@ -120,16 +127,23 @@ fun AddProductScreen(
     Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
         Column(
             Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 8.dp, bottom = if (keyboardVisible) 16.dp else 78.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-                ScreenHeader(tr("Add a cloth", "कपड़ा जोड़ें"), onBack)
+                ScreenHeader(
+                    tr("Add a cloth", "कपड़ा जोड़ें"),
+                    onBack,
+                    onClear = { showClearConfirmation = true },
+                    clearEnabled = !saving && (name.isNotBlank() || sizeVariant.isNotBlank() || category.isNotBlank() ||
+                        price.isNotBlank() || cost.isNotBlank() || stock.isNotBlank() || photo != null
+                    )
+                )
             }
             ProductPhoto(
                 sku = "new-product-preview",
                 imageId = "",
                 imageLoader = { null },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).height(200.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).height(photoHeight),
                 selectedPhoto = photo,
                 onTakePhoto = onTakePhoto,
                 onChoosePhoto = onChoosePhoto
@@ -140,11 +154,23 @@ fun AddProductScreen(
                     Modifier.fillMaxWidth().bringIntoViewRequester(nameBringIntoView).onFocusChanged {
                         if (it.isFocused) focusScope.launch { delay(220); nameBringIntoView.bringIntoView() }
                     },
-                    label = { Text(tr("Cloth name", "कपड़े का नाम")) },
+                    label = { Text(tr("Cloth name", "कपड़े का नाम"), maxLines = 1) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { priceFocus.requestFocus() }),
+                    keyboardActions = KeyboardActions(onNext = { costFocus.requestFocus() }),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp),
+                    shape = RoundedCornerShape(14.dp)
+                )
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+                OutlinedTextField(
+                    sizeVariant, { onSizeVariant(it.take(80)) },
+                    Modifier.fillMaxWidth(),
+                    label = { Text(tr("Size / variant (optional)", "साइज़ / वेरिएंट (वैकल्पिक)"), maxLines = 1) },
+                    placeholder = { Text(tr("e.g. Size L, Maroon, Design 20", "जैसे साइज़ L, मरून, डिज़ाइन 20"), maxLines = 1) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { costFocus.requestFocus() }),
                     shape = RoundedCornerShape(14.dp)
                 )
             }
@@ -155,7 +181,7 @@ fun AddProductScreen(
                     shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp)
                 ) {
-                    Text(category.ifBlank { tr("Choose category (optional)", "श्रेणी चुनें (वैकल्पिक)") }, Modifier.weight(1f), fontSize = 15.sp, color = if (category.isBlank()) Muted else Ink)
+                    Text(category.ifBlank { tr("Choose category (required)", "श्रेणी चुनें (ज़रूरी)") }, Modifier.weight(1f), fontSize = 15.sp, color = if (category.isBlank()) Muted else Ink)
                     Text("⌄", fontSize = 20.sp, color = Ink)
                 }
             }
@@ -188,30 +214,6 @@ fun AddProductScreen(
                 }
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        price, onPrice, Modifier.weight(1f).focusRequester(priceFocus).bringIntoViewRequester(priceBringIntoView).onFocusChanged {
-                            if (it.isFocused) focusScope.launch { delay(220); priceBringIntoView.bringIntoView() }
-                        },
-                        label = { Text(if (pricingUnit.isNotBlank()) tr("Rate / ${unitShort(pricingUnit)} ₹", "दर / ${unitHindi(pricingUnit)} ₹") else tr("Price / ${unitShort(unit)} ₹", "कीमत / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(onNext = { costFocus.requestFocus() }),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
-                    )
-                    OutlinedTextField(
-                        cost, onCost, Modifier.weight(1f).focusRequester(costFocus).bringIntoViewRequester(costBringIntoView).onFocusChanged {
-                            if (it.isFocused) focusScope.launch { delay(220); costBringIntoView.bringIntoView() }
-                        },
-                        label = { Text(if (pricingUnit.isNotBlank()) tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹") else tr("Cost / ${unitShort(unit)} ₹", "लागत / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(onNext = { stockFocus.requestFocus() }),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
-                    )
-                }
-            }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         stock, onStock, Modifier.weight(0.9f).focusRequester(stockFocus).bringIntoViewRequester(stockBringIntoView).onFocusChanged {
@@ -219,8 +221,8 @@ fun AddProductScreen(
                         },
                         label = { Text(tr("Stock (${unitShort(unit)})", "स्टॉक (${unitHindi(unit)})"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = if (fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus() }),
+                        keyboardOptions = KeyboardOptions(keyboardType = if (fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number, imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = { costFocus.requestFocus() }),
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
                     )
                     if (unit != "PIECE") Surface(Modifier.weight(1.1f), shape = RoundedCornerShape(14.dp), color = SoftBlue) {
@@ -231,22 +233,58 @@ fun AddProductScreen(
                     }
                 }
             }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        cost, onCost, Modifier.weight(1f).focusRequester(costFocus).bringIntoViewRequester(costBringIntoView).onFocusChanged {
+                            if (it.isFocused) focusScope.launch { delay(220); costBringIntoView.bringIntoView() }
+                        },
+                        label = { Text(if (pricingUnit.isNotBlank()) tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹") else tr("Cost / ${unitShort(unit)} ₹", "लागत / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = { priceFocus.requestFocus() }),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        price, onPrice, Modifier.weight(1f).focusRequester(priceFocus).bringIntoViewRequester(priceBringIntoView).onFocusChanged {
+                            if (it.isFocused) focusScope.launch { delay(220); priceBringIntoView.bringIntoView() }
+                        },
+                        label = { Text(if (pricingUnit.isNotBlank()) tr("Selling price / ${unitShort(pricingUnit)} ₹", "विक्रय मूल्य / ${unitHindi(pricingUnit)} ₹") else tr("Selling price / ${unitShort(unit)} ₹", "विक्रय मूल्य / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus() }),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp), shape = RoundedCornerShape(14.dp)
+                    )
+                }
+            }
         }
         if (!keyboardVisible) {
             Button(
                 onClick = onSave,
-                enabled = connected && !saving && name.isNotBlank() && price.isNotBlank() && cost.isNotBlank() && validOpeningStock,
+                enabled = !saving && name.isNotBlank() && category.isNotBlank() && price.isNotBlank() && cost.isNotBlank() && validOpeningStock,
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp).height(58.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                 else Icon(Icons.Rounded.CheckCircle, null)
-                Spacer(Modifier.width(10.dp)); Text(if (saving) tr("Saving cloth…", "कपड़ा सहेज रहे हैं…") else tr("Save cloth", "कपड़ा सहेजें"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp)); Text(
+                    when {
+                        saving -> tr("Saving cloth…", "कपड़ा सहेज रहे हैं…")
+                        !connected -> tr("Sign in to save", "सहेजने के लिए साइन इन करें")
+                        else -> tr("Save cloth", "कपड़ा सहेजें")
+                    },
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
     if (categoryPickerOpen) {
-        val filteredCategories = clothCategories.filter { it.contains(categorySearch.trim(), ignoreCase = true) }
+        val categories = (clothCategories + "Other").distinct()
+        val filteredCategories = categories.filter {
+            it.contains(categorySearch.trim(), ignoreCase = true) ||
+                (it == "Other" && tr("Other", "अन्य").contains(categorySearch.trim(), ignoreCase = true))
+        }
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { categoryPickerOpen = false },
             title = { Text(tr("Choose a category", "श्रेणी चुनें")) },
@@ -266,7 +304,7 @@ fun AddProductScreen(
                                 onClick = { onCategory(option); categoryPickerOpen = false },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(option, modifier = Modifier.fillMaxWidth(), fontSize = 15.sp, color = Ink)
+                                Text(if (option == "Other") tr("Other", "अन्य") else option, modifier = Modifier.fillMaxWidth(), fontSize = 15.sp, color = Ink)
                             }
                         }
                     }
@@ -274,6 +312,21 @@ fun AddProductScreen(
             },
             confirmButton = {
                 TextButton(onClick = { categoryPickerOpen = false }) { Text(tr("Close", "बंद करें")) }
+            }
+        )
+    }
+    if (showClearConfirmation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text(tr("Clear cloth form?", "कपड़े का फ़ॉर्म साफ़ करें?")) },
+            text = { Text(tr("This will remove the current entries and saved draft.", "इससे मौजूदा जानकारी और सेव किया हुआ ड्राफ़्ट हट जाएगा।")) },
+            confirmButton = {
+                TextButton(onClick = { showClearConfirmation = false; focusManager.clearFocus(); keyboard?.hide(); onClear() }) {
+                    Text(tr("Clear form", "फ़ॉर्म साफ़ करें"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) { Text(tr("Keep editing", "एडिट जारी रखें")) }
             }
         )
     }

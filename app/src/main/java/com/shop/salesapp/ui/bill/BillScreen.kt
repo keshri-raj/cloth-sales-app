@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,7 +36,9 @@ import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -65,6 +69,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shop.salesapp.CustomerCache
@@ -73,7 +80,6 @@ import com.shop.salesapp.ShopCustomer
 import com.shop.salesapp.ui.common.BillClothThumbnail
 import com.shop.salesapp.ui.common.DetailLine
 import com.shop.salesapp.ui.common.ScreenHeader
-import com.shop.salesapp.ui.common.SectionTitle
 import com.shop.salesapp.ui.model.CartLine
 import com.shop.salesapp.ui.model.formatQuantity
 import com.shop.salesapp.ui.model.quantityUnit
@@ -96,6 +102,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CartQuantityControl(
     line: CartLine,
@@ -105,44 +112,95 @@ fun CartQuantityControl(
     stockLimit: Boolean = true
 ) {
     var quantityText by remember(line.product.sku) { mutableStateOf(formatQuantity(line.quantity)) }
-    var isEditing by remember(line.product.sku) { mutableStateOf(false) }
-    LaunchedEffect(line.quantity, isEditing) {
-        if (!isEditing) quantityText = formatQuantity(line.quantity)
+    var showQuantityEditor by remember(line.product.sku) { mutableStateOf(false) }
+    var quantityDraft by remember(line.product.sku) {
+        val initial = formatQuantity(line.quantity)
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
     }
+    val quantityFocusRequester = remember(line.product.sku) { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(line.quantity) { if (!showQuantityEditor) quantityText = formatQuantity(line.quantity) }
     val step = if (line.product.fractionalQuantity) 0.1 else 1.0
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = {
             val next = (line.quantity - step).coerceAtLeast(0.0)
             quantityText = formatQuantity(next)
             onChange(line.product.sku, -step)
-        }, modifier = if (compact) Modifier.size(36.dp) else Modifier) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
-        if (line.product.fractionalQuantity) {
-            OutlinedTextField(
-                value = quantityText,
-                onValueChange = { value ->
-                    quantityText = value
-                    onSet(line.product.sku, value.toDoubleOrNull() ?: 0.0)
-                },
-                modifier = Modifier.width(if (compact) 68.dp else 82.dp).onFocusChanged { isEditing = it.isFocused },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Bold),
-                shape = RoundedCornerShape(10.dp)
-            )
-        } else {
-            Text(formatQuantity(line.quantity), fontSize = if (compact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
+        }, modifier = if (compact) Modifier.size(32.dp) else Modifier) { Icon(Icons.Rounded.Remove, contentDescription = tr("Decrease quantity", "मात्रा घटाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
+        Surface(
+            modifier = Modifier.width(if (compact) 56.dp else 82.dp).clickable {
+                val initial = formatQuantity(line.quantity)
+                quantityDraft = TextFieldValue(initial, selection = TextRange(initial.length))
+                showQuantityEditor = true
+            },
+            shape = RoundedCornerShape(10.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, Color(0xFFD5DDE9))
+        ) {
+            Box(Modifier.padding(horizontal = if (compact) 4.dp else 8.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+                Text(quantityText, fontSize = if (compact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
         }
         IconButton(onClick = {
             val next = if (stockLimit) minOf(line.product.stock, line.quantity + step) else line.quantity + step
             quantityText = formatQuantity(next)
             onChange(line.product.sku, step)
-        }, modifier = if (compact) Modifier.size(36.dp) else Modifier) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
+        }, modifier = if (compact) Modifier.size(32.dp) else Modifier) { Icon(Icons.Rounded.Add, contentDescription = tr("Increase quantity", "मात्रा बढ़ाएँ"), modifier = Modifier.size(if (compact) 18.dp else 24.dp)) }
+    }
+    if (showQuantityEditor) {
+        LaunchedEffect(line.product.sku) {
+            delay(180)
+            quantityFocusRequester.requestFocus()
+            keyboard?.show()
+        }
+        AlertDialog(
+            onDismissRequest = { showQuantityEditor = false; keyboard?.hide() },
+            title = { Text(tr("Edit quantity", "मात्रा बदलें"), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${line.product.name} · ${line.product.quantityUnit()}", color = Muted)
+                    OutlinedTextField(
+                        value = quantityDraft,
+                        onValueChange = { input ->
+                            val allowDecimal = line.product.fractionalQuantity
+                            val filtered = input.text.filter { it.isDigit() || (allowDecimal && it == '.') }
+                            if (!allowDecimal || filtered.count { it == '.' } <= 1) {
+                                val start = input.selection.start.coerceAtMost(filtered.length)
+                                val end = input.selection.end.coerceAtMost(filtered.length)
+                                quantityDraft = input.copy(text = filtered, selection = TextRange(start, end))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().focusRequester(quantityFocusRequester),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = if (line.product.fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newQuantity = quantityDraft.text.toDoubleOrNull()
+                    if (newQuantity != null && newQuantity >= 0 && (!stockLimit || newQuantity <= line.product.stock)) {
+                        quantityText = formatQuantity(newQuantity)
+                        onSet(line.product.sku, newQuantity)
+                    }
+                    showQuantityEditor = false
+                    keyboard?.hide()
+                }) { Text(tr("Done", "हो गया")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuantityEditor = false; keyboard?.hide() }) { Text(tr("Cancel", "रद्द करें")) }
+            }
+        )
     }
 }
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BillScreen(
     padding: PaddingValues,
+    shouldScrollToDiscount: Boolean,
+    onDiscountScrollComplete: () -> Unit,
     connected: Boolean,
     orderMode: Boolean,
     customerName: String,
@@ -179,26 +237,43 @@ fun BillScreen(
     onQuantity: (String, Double) -> Unit,
     onSetQuantity: (String, Double) -> Unit,
     onSetMeasureQuantity: (String, Double?) -> Unit,
+    onSetUnitPrice: (String, Int) -> Unit,
     onSave: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onClear: () -> Unit
 ) {
     var selectedProductDetails by remember { mutableStateOf<Product?>(null) }
     var showNewCustomerDialog by remember { mutableStateOf(false) }
+    var showDiscountDialog by remember { mutableStateOf(false) }
+    var discountDraft by remember { mutableStateOf("") }
+    var editingPriceSku by remember { mutableStateOf<String?>(null) }
+    var priceDraft by remember { mutableStateOf("") }
     var showSavedCustomerPicker by remember { mutableStateOf(false) }
     var savedCustomerQuery by remember { mutableStateOf("") }
     var promptedCustomerPhone by remember { mutableStateOf("") }
+    var showClearConfirmation by remember { mutableStateOf(false) }
     val subtotal = cart.sumOf { cartLineAmount(it) }
+    val editingPriceLine = cart.firstOrNull { it.product.sku == editingPriceSku }
     val parsedDiscount = discountValue.toDoubleOrNull() ?: 0.0
     val discountAmount = parsedDiscount.roundToInt()
     val total = subtotal - discountAmount
     val validDiscount = !discountEnabled || (discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 && discountAmount <= subtotal && total > 0)
-    val validCart = cart.isNotEmpty() && cart.all { validCartQuantity(it, enforceStock = !orderMode, requirePriceMeasure = !orderMode) }
+    val validCart = cart.isNotEmpty() && cart.all {
+        validCartQuantity(it, enforceStock = !orderMode, requirePriceMeasure = !orderMode) && it.unitPrice > 0
+    }
+    val paidPaymentMethods = setOf("Cash", "UPI", "Card")
+    val isCredit = paymentMode == "Credit"
+    val paidStatusSelected = paymentMode == "Paid" || paymentMode in paidPaymentMethods
     val paidNow = if (paymentMode == "Credit") creditAmountReceived.toIntOrNull() else total
     val validCreditAmount = paymentMode != "Credit" || (paidNow != null && paidNow in 0..total)
     val hasCreditPaymentReceived = paymentMode == "Credit" && paidNow != null && paidNow > 0
+    val validPaymentSelection = orderMode || (
+        paymentMode in paidPaymentMethods ||
+            (isCredit && (!hasCreditPaymentReceived || creditPaymentMethod in paidPaymentMethods))
+        )
     val canSubmit = !saving && customerPhone.isNotBlank() && customerExists != null &&
         (customerExists || customerName.isNotBlank()) && validCart &&
-        (orderMode || (validCreditAmount && validDiscount))
+        (orderMode || (validPaymentSelection && validCreditAmount && validDiscount))
     val submitHint = when {
         saving -> if (orderMode) tr("Sending order request…", "ऑर्डर अनुरोध भेज रहे हैं…") else tr("Creating bill…", "बिल बना रहे हैं…")
         customerPhone.isBlank() -> tr("Enter customer phone to continue", "आगे बढ़ने के लिए ग्राहक का फ़ोन नंबर लिखें")
@@ -208,6 +283,7 @@ fun BillScreen(
         !validCart -> tr("Check each quantity and enter weight/length where needed", "मात्रा जाँचें और जहाँ ज़रूरी हो वज़न/लंबाई लिखें")
         !orderMode && !validDiscount -> tr("Enter a valid discount", "सही छूट दर्ज करें")
         !orderMode && !validCreditAmount -> tr("Enter a valid amount received", "मिली हुई सही राशि दर्ज करें")
+        !orderMode && !validPaymentSelection -> tr("Choose payment status and payment method", "भुगतान की स्थिति और तरीका चुनें")
         else -> when {
             orderMode -> tr("Ready to send the order request", "ऑर्डर अनुरोध भेजने के लिए तैयार")
             connected -> tr("Ready to create this bill", "बिल बनाने के लिए तैयार")
@@ -216,15 +292,30 @@ fun BillScreen(
     }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val discountBringIntoViewRequester = remember { BringIntoViewRequester() }
-    val discountFocusRequester = remember { FocusRequester() }
+    val discountDialogFocusRequester = remember { FocusRequester() }
+    val priceDialogFocusRequester = remember { FocusRequester() }
+    val phoneFocusRequester = remember { FocusRequester() }
     val creditAmountBringIntoViewRequester = remember { BringIntoViewRequester() }
     val billListState = rememberLazyListState()
     val screenScope = rememberCoroutineScope()
-    LaunchedEffect(discountEnabled, orderMode) {
-        if (discountEnabled && !orderMode) {
-            delay(100)
-            discountFocusRequester.requestFocus()
+    LaunchedEffect(shouldScrollToDiscount, orderMode, cart.size) {
+        if (shouldScrollToDiscount && !orderMode && cart.isNotEmpty()) {
+            delay(250)
+            billListState.animateScrollToItem(3)
+            onDiscountScrollComplete()
+        }
+    }
+    LaunchedEffect(showDiscountDialog) {
+        if (showDiscountDialog) {
+            delay(180)
+            discountDialogFocusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
+    LaunchedEffect(editingPriceSku) {
+        if (editingPriceSku != null) {
+            delay(180)
+            priceDialogFocusRequester.requestFocus()
             keyboard?.show()
         }
     }
@@ -250,22 +341,38 @@ fun BillScreen(
       LazyColumn(
         state = billListState,
         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 142.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = if (!orderMode && cart.isNotEmpty()) 250.dp else 142.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
         item {
-            ScreenHeader(if (orderMode) tr("Place an order", "ऑर्डर भेजें") else tr("Create a bill", "बिल बनाएँ"), onBack)
+            ScreenHeader(
+                if (orderMode) tr("Place an order", "ऑर्डर भेजें") else tr("New bill", "नया बिल"),
+                onBack,
+                onClear = { showClearConfirmation = true },
+                clearEnabled = !saving && (customerName.isNotBlank() || customerPhone.isNotBlank() || customerEmail.isNotBlank() ||
+                    customerAddress.isNotBlank() || cart.isNotEmpty() || paymentMode.isNotBlank() ||
+                    discountValue.isNotBlank() || creditAmountReceived != "0" || creditPaymentMethod.isNotBlank()
+                )
+            )
         }
         item {
-            SectionTitle("1", tr("Customer", "ग्राहक"))
+            Text(
+                tr("Customer phone", "ग्राहक का फ़ोन"),
+                modifier = Modifier.clickable {
+                    phoneFocusRequester.requestFocus()
+                    keyboard?.show()
+                },
+                color = Ink,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = customerPhone,
                     onValueChange = onPhone,
-                    modifier = Modifier.weight(if (customerExists == true) 0.5f else 1f),
-                    label = { Text(tr("Phone number", "फ़ोन नंबर")) },
-                    placeholder = { Text(tr("Type number", "नंबर लिखें")) },
+                    modifier = Modifier.weight(if (customerExists == true) 0.5f else 1f).focusRequester(phoneFocusRequester),
+                    placeholder = { Text(tr("Enter phone number", "फ़ोन नंबर लिखें")) },
                     singleLine = true,
                     readOnly = customerExists == true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -300,6 +407,7 @@ fun BillScreen(
                     }
                 }
             }
+            Text(tr("Required to create bill", "बिल बनाने के लिए ज़रूरी"), color = Muted, fontSize = 14.sp)
             if (customerSearching) Text(tr("Checking saved customers…", "सहेजे ग्राहक खोज रहे हैं…"), color = Muted, fontSize = 14.sp)
             if (customerExists == false && !customerSearching && !showNewCustomerDialog) {
                 TextButton(onClick = { showNewCustomerDialog = true }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
@@ -330,158 +438,214 @@ fun BillScreen(
             }
         }
         item {
-            Divider(color = Color(0xFFDDE5E4))
-            Spacer(Modifier.height(4.dp))
-            SectionTitle("2", tr("Add items", "सामान जोड़ें"))
-            Spacer(Modifier.height(8.dp))
             Surface(
-                modifier = Modifier.fillMaxWidth().height(58.dp).clickable(onClick = onFindProduct),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
                 color = Color.White,
-                border = BorderStroke(1.dp, Muted)
+                border = BorderStroke(1.dp, Color(0xFFBCC9DD))
             ) {
-                Row(Modifier.fillMaxSize().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted)
-                    Spacer(Modifier.width(10.dp))
-                    Text(tr("Search cloth name or code", "कपड़े का नाम या कोड खोजें"), Modifier.weight(1f), color = Muted, fontSize = 16.sp, maxLines = 1)
-                    IconButton(onClick = onScan, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Rounded.QrCode2, contentDescription = tr("Scan cloth QR", "कपड़े का QR स्कैन करें"), tint = Teal)
-                    }
-                }
-            }
-        }
-        if (cart.isEmpty()) {
-            item {
-                Surface(shape = RoundedCornerShape(16.dp), color = SoftBlue) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.ShoppingBag, null, tint = Ink); Spacer(Modifier.width(12.dp)); Text(tr("No items added yet", "अभी कोई सामान नहीं जोड़ा गया"), fontSize = 17.sp, color = Ink)
-                    }
-                }
-            }
-        } else {
-            itemsIndexed(cart, key = { index, line -> "cart:$index:${line.product.sku}" }) { _, line ->
-                Card(
-                    onClick = { selectedProductDetails = line.product },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE1E8E7))
-                ) {
-                    Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BillClothThumbnail(line.product, imageLoader, Modifier.size(64.dp))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(line.product.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Ink, maxLines = 1)
-                            val priceUnit = if (line.product.pricingUnit.isNotBlank()) line.product.pricingUnit else line.product.quantityUnit()
-                            Text("${line.product.sku} · ₹${line.product.price} ${unitPriceHindi(priceUnit)}", color = Muted, fontSize = 12.sp, maxLines = 1)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CartQuantityControl(line, onQuantity, onSetQuantity, compact = true, stockLimit = !orderMode)
-                                Spacer(Modifier.weight(1f))
-                                Text("₹${cartLineAmount(line)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().height(54.dp).clickable(onClick = onFindProduct),
+                        shape = RoundedCornerShape(13.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Muted)
+                    ) {
+                        Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Search, contentDescription = null, tint = Ink)
+                            Spacer(Modifier.width(10.dp))
+                            Text(tr("Select cloths", "कपड़े चुनें"), Modifier.weight(1f), color = Muted, fontSize = 16.sp, maxLines = 1)
+                            IconButton(onClick = onScan, modifier = Modifier.size(46.dp)) {
+                                Icon(Icons.Rounded.QrCode2, contentDescription = tr("Scan cloth QR", "कपड़े का QR स्कैन करें"), tint = Teal)
                             }
-                            if (line.product.pricingUnit.isNotBlank() && !orderMode) {
-                                OutlinedTextField(
-                                    value = line.measureQuantity?.let(::formatQuantity).orEmpty(),
-                                    onValueChange = { value ->
-                                        val filtered = value.filter { it.isDigit() || it == '.' }.let { text -> if (text.count { it == '.' } <= 1) text else line.measureQuantity?.let(::formatQuantity).orEmpty() }
-                                        onSetMeasureQuantity(line.product.sku, filtered.toDoubleOrNull())
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text(tr("Total ${unitEnglish(line.product.pricingUnit)} sold", "कुल ${unitHindi(line.product.pricingUnit)}")) },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(11.dp)
+                        }
+                    }
+                    if (cart.isEmpty()) {
+                        Surface(shape = RoundedCornerShape(13.dp), color = SoftBlue) {
+                            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.ShoppingBag, null, tint = Ink)
+                                Spacer(Modifier.width(10.dp))
+                                Text(tr("No items added yet", "अभी कोई सामान नहीं जोड़ा गया"), fontSize = 16.sp, color = Ink)
+                            }
+                        }
+                    } else {
+                        Divider(color = Color(0xFFDDE5E4))
+                        cart.forEachIndexed { index, line ->
+                            key(line.product.sku) {
+                                val measureQuantityBringIntoViewRequester = remember { BringIntoViewRequester() }
+                                if (index > 0) Divider(color = Color(0xFFE8EBF0))
+                                Row(
+                                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                BillClothThumbnail(
+                                    line.product,
+                                    imageLoader,
+                                    Modifier.weight(1f).aspectRatio(1f).clickable { selectedProductDetails = line.product }
                                 )
+                                Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val priceUnit = if (line.product.pricingUnit.isNotBlank()) line.product.pricingUnit else line.product.quantityUnit()
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                line.product.name,
+                                                modifier = Modifier.clickable { selectedProductDetails = line.product },
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 16.sp,
+                                                color = Ink,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                listOf(line.product.sizeVariant, line.product.sku).filter { it.isNotBlank() }.joinToString(" · "),
+                                                color = Muted,
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Surface(
+                                            modifier = Modifier.width(91.dp).then(
+                                                if (!orderMode) Modifier.clickable {
+                                                    priceDraft = line.unitPrice.toString()
+                                                    editingPriceSku = line.product.sku
+                                                } else Modifier
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (orderMode) Color(0xFFF3F6FA) else Color(0xFFEFF6FA),
+                                            border = BorderStroke(1.dp, Color(0xFFD5DDE9))
+                                        ) {
+                                            Column(Modifier.padding(horizontal = 6.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(tr("Price / unit", "एक यूनिट की कीमत"), color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(
+                                                    "₹${line.unitPrice}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}",
+                                                    color = Ink,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 16.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(tr("Qty", "मात्रा"), color = Muted, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                        Spacer(Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(13.dp),
+                                            color = Color.White,
+                                            border = BorderStroke(1.dp, Color(0xFFD5DDE9))
+                                        ) {
+                                            CartQuantityControl(line, onQuantity, onSetQuantity, compact = true, stockLimit = !orderMode)
+                                        }
+                                        Spacer(Modifier.weight(1f))
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(tr("Final price", "अंतिम कीमत"), color = Muted, fontSize = 12.sp, maxLines = 1)
+                                            Text("₹${cartLineAmount(line)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        }
+                                    }
+                                    if (line.product.pricingUnit.isNotBlank() && !orderMode) {
+                                        OutlinedTextField(
+                                            value = line.measureQuantity?.let(::formatQuantity).orEmpty(),
+                                            onValueChange = { value ->
+                                                val filtered = value.filter { it.isDigit() || it == '.' }.let { text -> if (text.count { it == '.' } <= 1) text else line.measureQuantity?.let(::formatQuantity).orEmpty() }
+                                                onSetMeasureQuantity(line.product.sku, filtered.toDoubleOrNull())
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .bringIntoViewRequester(measureQuantityBringIntoViewRequester)
+                                                .onFocusChanged { focusState ->
+                                                    if (focusState.isFocused) screenScope.launch {
+                                                        delay(200)
+                                                        billListState.animateScrollToItem(2)
+                                                        delay(100)
+                                                        measureQuantityBringIntoViewRequester.bringIntoView()
+                                                        keyboard?.show()
+                                                    }
+                                                },
+                                            label = { Text(tr("Total ${unitEnglish(line.product.pricingUnit)} sold", "कुल ${unitHindi(line.product.pricingUnit)}")) },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            shape = RoundedCornerShape(11.dp)
+                                        )
+                                    }
+                                }
+                                }
                             }
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier.align(Alignment.End).size(86.dp).clickable(onClick = onFindProduct),
+                        shape = CircleShape,
+                        color = Color.White,
+                        border = BorderStroke(1.5.dp, Teal)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Rounded.Add, contentDescription = null, tint = Teal, modifier = Modifier.size(21.dp))
+                            //Text(tr("Add more items", "और सामान जोड़ें"), color = Teal, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         }
                     }
                 }
             }
         }
-        if (!orderMode) item {
-            Surface(shape = RoundedCornerShape(18.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
-                Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(tr("Total amount", "कुल राशि"), Modifier.weight(1f), fontSize = 16.sp, color = Ink)
-                        Text("₹$subtotal", fontSize = 16.sp, color = Ink, fontWeight = FontWeight.SemiBold)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(tr("Discount", "छूट"), Modifier.weight(1f), fontSize = 16.sp, color = Ink)
-                        Switch(checked = discountEnabled, onCheckedChange = onDiscountEnabled)
-                    }
-                    if (discountEnabled) {
-                        OutlinedTextField(
-                            value = discountValue,
-                            onValueChange = onDiscountValue,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(discountFocusRequester)
-                                .bringIntoViewRequester(discountBringIntoViewRequester)
-                                .onFocusChanged { focusState ->
-                                    if (focusState.isFocused) {
-                                        screenScope.launch {
-                                            delay(350)
-                                            val discountItemIndex = if (cart.isEmpty()) 4 else 3 + cart.size
-                                            billListState.animateScrollToItem(discountItemIndex)
-                                            delay(100)
-                                            discountBringIntoViewRequester.bringIntoView()
-                                        }
+        if (!orderMode) item(key = "bill.discount") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFE0E6EE))
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(tr("Price", "कीमत"), Modifier.weight(1f), color = Ink, fontSize = 15.sp)
+                            Text("₹$subtotal", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(tr("Discount", "छूट"), Modifier.weight(1f), color = Ink, fontSize = 15.sp)
+                            Text(
+                                if (discountAmount > 0) "− ₹$discountAmount" else "₹0",
+                                color = if (discountAmount > 0) Color(0xFFB64B15) else Muted,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (discountEnabled) {
+                                TextButton(
+                                    onClick = {
+                                        discountDraft = discountValue
+                                        showDiscountDialog = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 5.dp)
+                                ) { Text(tr("Edit", "बदलें"), color = Teal, fontSize = 13.sp) }
+                            }
+                            Switch(
+                                checked = discountEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        discountDraft = discountValue
+                                        showDiscountDialog = true
+                                    } else {
+                                        onDiscountEnabled(false)
                                     }
-                                },
-                            label = { Text(tr("Discount amount (₹)", "छूट की राशि (₹)"), maxLines = 1) },
-                            placeholder = { Text(tr("Enter amount", "राशि लिखें")) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp),
-                            shape = RoundedCornerShape(12.dp)
-                        )
+                                }
+                            )
+                        }
+                        Divider(color = Color(0xFFE7EBF0), thickness = 1.dp)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("Total", "कुल"), color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                                Text(tr("Price − Discount", "कीमत − छूट"), color = Muted, fontSize = 11.sp)
+                            }
+                            Text("₹${total.coerceAtLeast(0)}", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Teal)
+                        }
                     }
-                    Divider(color = Color(0xFFE1E8E7))
-                    Row(Modifier.fillMaxWidth().background(SoftBlue, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(tr("Final amount", "अंतिम राशि"), Modifier.weight(1f), fontSize = 18.sp, color = Ink, fontWeight = FontWeight.Bold)
-                        Text("₹${total.coerceAtLeast(0)}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Teal)
-                    }
-                    if (!validDiscount) Text(tr("Enter a valid discount below the total amount.", "कुल राशि से कम सही छूट दर्ज करें।"), color = Color(0xFFB42318), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
+                if (!validDiscount) Text(tr("Enter a valid discount below the total amount.", "कुल राशि से कम सही छूट दर्ज करें।"), color = Color(0xFFB42318), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
-        if (!orderMode) item {
-            Divider(color = Color(0xFFDDE5E4))
-            Spacer(Modifier.height(4.dp))
-            SectionTitle("3", tr("Payment", "भुगतान"))
-            Spacer(Modifier.height(8.dp))
-            val isCredit = paymentMode == "Credit"
-            Text(tr("Payment status", "भुगतान की स्थिति"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!isCredit) {
-                    Button(onClick = {}, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                        Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    OutlinedButton(onClick = { onPaymentMode("Cash") }, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                        Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 14.sp)
-                    }
-                }
-                if (isCredit) {
-                    Button(onClick = {}, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                        Text(tr("Credit", "उधार"), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    OutlinedButton(onClick = { onPaymentMode("Credit") }, modifier = Modifier.weight(1f).height(50.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(14.dp)) {
-                        Text(tr("Credit", "उधार"), fontSize = 14.sp)
-                    }
-                }
-            }
-            if (!isCredit) {
-                Spacer(Modifier.height(8.dp))
-                Text(tr("Paid by", "भुगतान का तरीका"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Cash", "UPI", "Card").forEach { method ->
-                        if (paymentMode == method) Button(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                        else OutlinedButton(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp) }
-                    }
-                }
-            }
-            if (paymentMode == "Credit") {
-                Spacer(Modifier.height(8.dp))
+        if (!orderMode && paymentMode == "Credit") item(key = "bill.credit-details") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr("Credit payment", "उधार भुगतान"), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 OutlinedTextField(
                     value = creditAmountReceived,
                     onValueChange = onCreditAmountReceived,
@@ -491,23 +655,19 @@ fun BillScreen(
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused) {
                                 screenScope.launch {
-                                    delay(350)
-                                    val paymentItemIndex = if (cart.isEmpty()) 5 else 4 + cart.size
-                                    billListState.animateScrollToItem(paymentItemIndex)
-                                    delay(100)
+                                    delay(180)
                                     creditAmountBringIntoViewRequester.bringIntoView()
+                                    keyboard?.show()
                                 }
                             }
                         },
-                    label = { Text(tr("Amount received now (₹)", "अभी मिली राशि (₹)")) },
-                    placeholder = { Text("0") },
+                    placeholder = { Text(tr("Amount received now (₹)", "अभी मिली राशि (₹)"), color = Muted) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
                     shape = RoundedCornerShape(14.dp)
                 )
                 if (hasCreditPaymentReceived) {
-                    Spacer(Modifier.height(6.dp))
                     Text(tr("Received via", "राशि मिली via"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("Cash", "UPI", "Card").forEach { method ->
@@ -519,7 +679,7 @@ fun BillScreen(
                 val dueNow = if (paidNow != null) (total - paidNow).coerceAtLeast(0) else total
                 Text(
                     if (validCreditAmount) tr("Due after this payment: ₹$dueNow", "इस भुगतान के बाद बकाया: ₹$dueNow") else tr("Enter an amount from ₹0 to ₹$total.", "₹0 से ₹$total तक राशि लिखें।"),
-                    color = if (validCreditAmount) Color(0xFFC62828) else Color(0xFFC62828), fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+                    color = Color(0xFFC62828), fontSize = 15.sp, fontWeight = FontWeight.SemiBold
                 )
             }
         }
@@ -528,6 +688,61 @@ fun BillScreen(
           Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Paper).padding(horizontal = 14.dp, vertical = 8.dp),
           verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
+          if (!orderMode && cart.isNotEmpty()) {
+              Surface(
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(14.dp),
+                  color = Color.White,
+                  border = BorderStroke(1.dp, Color(0xFFD9E3EE))
+              ) {
+                  Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                      Text(tr("Payment status", "भुगतान की स्थिति"), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                      Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                          if (paidStatusSelected) {
+                              Button(onClick = { onPaymentMode("Paid") }, modifier = Modifier.weight(1f).height(48.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(12.dp)) {
+                                  Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                              }
+                          } else {
+                              OutlinedButton(onClick = { onPaymentMode("Paid") }, modifier = Modifier.weight(1f).height(48.dp), contentPadding = PaddingValues(2.dp), shape = RoundedCornerShape(12.dp)) {
+                                  Text(tr("Paid in full", "पूरा भुगतान"), fontSize = 16.sp, maxLines = 1)
+                              }
+                          }
+                          if (isCredit) {
+                              Button(
+                                  onClick = { onPaymentMode("Credit") },
+                                  modifier = Modifier.weight(1f).height(48.dp),
+                                  contentPadding = PaddingValues(2.dp),
+                                  shape = RoundedCornerShape(12.dp)
+                              ) { Text(tr("Due / credit", "बाकी / उधार"), fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                          } else {
+                              OutlinedButton(
+                                  onClick = {
+                                      onPaymentMode("Credit")
+                                      screenScope.launch {
+                                          delay(150)
+                                          billListState.animateScrollToItem(4)
+                                      }
+                                  },
+                                  modifier = Modifier.weight(1f).height(48.dp),
+                                  contentPadding = PaddingValues(2.dp),
+                                  shape = RoundedCornerShape(12.dp)
+                              ) { Text(tr("Due / credit", "बाकी / उधार"), fontSize = 16.sp, maxLines = 1) }
+                          }
+                      }
+                      if (paidStatusSelected) {
+                          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                              listOf("Cash", "UPI", "Card").forEach { method ->
+                                  if (paymentMode == method) Button(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(1.dp), shape = RoundedCornerShape(12.dp)) {
+                                      Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                  } else OutlinedButton(onClick = { onPaymentMode(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(1.dp), shape = RoundedCornerShape(12.dp)) {
+                                      Text(tr(method, method), fontSize = 14.sp)
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
           Text(submitHint, Modifier.padding(horizontal = 4.dp), fontSize = 13.sp, color = if (canSubmit) Teal else Muted, maxLines = 1)
           Button(
               onClick = onSave,
@@ -541,6 +756,123 @@ fun BillScreen(
               Text(if (orderMode) tr("Send order request", "ऑर्डर अनुरोध भेजें") else tr("Create bill", "बिल बनाएँ"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
           }
       }
+    }
+    if (editingPriceSku != null && editingPriceLine != null) {
+        val editedUnitPrice = priceDraft.toIntOrNull()
+        val editedLineTotal = editedUnitPrice?.let { price ->
+            if (editingPriceLine.product.pricingUnit.isNotBlank()) lineAmount(price, editingPriceLine.measureQuantity ?: 0.0)
+            else lineAmount(price, editingPriceLine.quantity)
+        }
+        AlertDialog(
+            onDismissRequest = {
+                editingPriceSku = null
+                keyboard?.hide()
+                focusManager.clearFocus()
+            },
+            title = { Text(tr("Price per unit", "एक यूनिट की कीमत"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(editingPriceLine.product.name, color = Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    OutlinedTextField(
+                        value = priceDraft,
+                        onValueChange = { value -> priceDraft = value.filter { it.isDigit() } },
+                        modifier = Modifier.fillMaxWidth().focusRequester(priceDialogFocusRequester),
+                        placeholder = { Text(tr("Enter unit price (₹)", "यूनिट कीमत लिखें (₹)"), color = Muted) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 20.sp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    if (editedLineTotal != null && editedLineTotal > 0) {
+                        Text(tr("Final item price: ₹$editedLineTotal", "सामान की अंतिम कीमत: ₹$editedLineTotal"), color = Teal, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        editedUnitPrice?.let { onSetUnitPrice(editingPriceLine.product.sku, it) }
+                        editingPriceSku = null
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    },
+                    enabled = editedUnitPrice != null && editedUnitPrice > 0
+                ) { Text(tr("Update price", "कीमत बदलें")) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        editingPriceSku = null
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    }
+                ) { Text(tr("Cancel", "रद्द करें")) }
+            }
+        )
+    }
+    if (showDiscountDialog) {
+        val draftAmount = discountDraft.toDoubleOrNull()?.roundToInt()
+        val validDraft = discountDraft.toDoubleOrNull()?.let { amount ->
+            amount >= 0 && (subtotal == 0 || (draftAmount != null && draftAmount <= subtotal && subtotal - draftAmount > 0))
+        } == true
+        AlertDialog(
+            onDismissRequest = {
+                showDiscountDialog = false
+                keyboard?.hide()
+                focusManager.clearFocus()
+            },
+            title = { Text(tr("Bill discount", "बिल में छूट"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(tr("Enter the rupee amount to subtract from this bill.", "इस बिल से घटाने के लिए रुपये की राशि लिखें।"), color = Muted, fontSize = 14.sp)
+                    OutlinedTextField(
+                        value = discountDraft,
+                        onValueChange = { value ->
+                            val filtered = value.filter { it.isDigit() || it == '.' }
+                            if (filtered.count { it == '.' } <= 1) discountDraft = filtered
+                        },
+                        modifier = Modifier.fillMaxWidth().focusRequester(discountDialogFocusRequester),
+                        placeholder = { Text(tr("Discount amount (₹)", "छूट की राशि (₹)"), color = Muted) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 20.sp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    if (draftAmount != null && draftAmount > 0) {
+                        Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFFFF0E7)) {
+                            Text(
+                                tr("Discount: − ₹$draftAmount · New total: ₹${(subtotal - draftAmount).coerceAtLeast(0)}", "छूट: − ₹$draftAmount · नया कुल: ₹${(subtotal - draftAmount).coerceAtLeast(0)}"),
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                color = Color(0xFFB64B15),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDiscountValue(discountDraft)
+                        onDiscountEnabled(true)
+                        showDiscountDialog = false
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    },
+                    enabled = validDraft
+                ) { Text(tr("Apply", "लागू करें")) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDiscountDialog = false
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    }
+                ) { Text(tr("Cancel", "रद्द करें")) }
+            }
+        )
     }
     if (showSavedCustomerPicker) {
         val matchingCustomers = customers.filter {
@@ -657,6 +989,29 @@ fun BillScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showNewCustomerDialog = false }, enabled = !savingCustomer) { Text(tr("Cancel", "रद्द करें")) }
+            }
+        )
+    }
+    if (showClearConfirmation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text(if (orderMode) tr("Clear order request?", "ऑर्डर अनुरोध साफ़ करें?") else tr("Clear bill?", "बिल साफ़ करें?")) },
+            text = { Text(tr("This will remove the current entries and saved draft.", "इससे मौजूदा जानकारी और सेव किया हुआ ड्राफ़्ट हट जाएगा।")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirmation = false
+                    showDiscountDialog = false
+                    showNewCustomerDialog = false
+                    showSavedCustomerPicker = false
+                    editingPriceSku = null
+                    promptedCustomerPhone = ""
+                    keyboard?.hide()
+                    focusManager.clearFocus()
+                    onClear()
+                }) { Text(tr("Clear form", "फ़ॉर्म साफ़ करें")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) { Text(tr("Keep editing", "एडिट जारी रखें")) }
             }
         )
     }

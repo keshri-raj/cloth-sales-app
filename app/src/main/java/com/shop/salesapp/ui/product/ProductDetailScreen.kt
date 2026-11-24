@@ -95,7 +95,7 @@ fun ProductDetailScreen(
     onAddStock: (Double, String, (Boolean) -> Unit) -> Unit,
     onDelete: () -> Unit,
     onProductQr: () -> Unit,
-    onEdit: (String, String, Int, Boolean, String, (Boolean) -> Unit) -> Unit,
+    onEdit: (String, String, String, Int, Boolean, String, (Boolean) -> Unit) -> Unit,
     onBack: () -> Unit
 ) {
     var showEdit by remember(product.sku) { mutableStateOf(false) }
@@ -122,6 +122,7 @@ fun ProductDetailScreen(
             )
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(product.name, color = Ink, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                if (product.sizeVariant.isNotBlank()) Text(product.sizeVariant, color = Muted, fontSize = 16.sp)
                 if (product.category.isNotBlank()) Text(product.category, color = Muted, fontSize = 16.sp)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -202,9 +203,9 @@ fun ProductDetailScreen(
             product = product,
             saving = savingEdit,
             onDismiss = { if (!savingEdit) showEdit = false },
-            onSave = { name, category, price, fractional, unit ->
+            onSave = { name, sizeVariant, category, price, fractional, unit ->
                 savingEdit = true
-                onEdit(name, category, price, fractional, unit) { success ->
+                onEdit(name, sizeVariant, category, price, fractional, unit) { success ->
                     savingEdit = false
                     if (success) showEdit = false
                 }
@@ -295,9 +296,10 @@ fun EditClothDialog(
     product: Product,
     saving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, String, Int, Boolean, String) -> Unit
+    onSave: (String, String, String, Int, Boolean, String) -> Unit
 ) {
     var name by remember(product.sku) { mutableStateOf(product.name) }
+    var sizeVariant by remember(product.sku) { mutableStateOf(product.sizeVariant) }
     var category by remember(product.sku) { mutableStateOf(product.category) }
     var price by remember(product.sku) { mutableStateOf(product.price.toString()) }
     var unit by remember(product.sku) { mutableStateOf(product.quantityUnit()) }
@@ -308,7 +310,13 @@ fun EditClothDialog(
         title = { Text(tr("Edit cloth", "कपड़ा बदलें"), color = Ink, fontWeight = FontWeight.Bold) },
         text = {
             Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Cloth name", "कपड़े का नाम")) }, singleLine = true)
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Cloth name", "कपड़े का नाम"), maxLines = 1) }, singleLine = true)
+                OutlinedTextField(
+                    sizeVariant, { sizeVariant = it.take(80) }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text(tr("Size / variant (optional)", "साइज़ / वेरिएंट (वैकल्पिक)"), maxLines = 1) },
+                    placeholder = { Text(tr("e.g. Size L, Maroon, Design 20", "जैसे साइज़ L, मरून, डिज़ाइन 20"), maxLines = 1) },
+                    singleLine = true
+                )
                 OutlinedTextField(category, { category = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Category", "श्रेणी")) }, singleLine = true)
                 OutlinedTextField(
                     price,
@@ -333,7 +341,7 @@ fun EditClothDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(name.trim(), category.trim(), price.toIntOrNull() ?: 0, fractional, unit) }, enabled = valid && !saving) {
+            TextButton(onClick = { onSave(name.trim(), sizeVariant.trim(), category.trim(), price.toIntOrNull() ?: 0, fractional, unit) }, enabled = valid && !saving) {
                 Text(if (saving) tr("Saving…", "सहेज रहे हैं…") else tr("Save changes", "बदलाव सहेजें"))
             }
         },

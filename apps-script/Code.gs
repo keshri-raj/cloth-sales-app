@@ -13,7 +13,7 @@ const APP = {
   timeZone: 'Asia/Kolkata',
   invoiceFolderName: 'Sales App Invoices',
   sheets: {
-    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit'],
+    Inventory: ['SKU', 'Product Name', 'Category', 'Supplier', 'Unit Cost', 'Selling Price', 'Opening Stock', 'Reorder Level', 'Purchased Qty', 'Sold Qty', 'Current Stock', 'Stock Value', 'Stock Status', 'QR Code', 'Image ID', 'Availability', 'Fractional Quantity', 'Unit', 'Pricing Unit', 'Size / Variant'],
     Customers: ['Customer ID', 'Customer Name', 'Phone', 'Email', 'City / Address', 'Customer Type', 'Total Orders', 'Total Spent', 'Last Purchase Date'],
     'Sales Invoices': ['Invoice #', 'Date', 'Customer ID', 'Customer Name', 'Items', 'Invoice Total', 'Gross Profit', 'Payment Mode', 'Invoice File', 'Customer Phone', 'Status'],
     'Sales Items': ['Invoice #', 'Date', 'SKU', 'Product Name', 'Category', 'Quantity', 'Unit Price', 'Discount', 'Line Total', 'COGS', 'Gross Profit', 'Status', 'Unit', 'Pricing Unit', 'Measure Quantity'],
@@ -445,28 +445,33 @@ function setProductAvailability_(config, payload) {
 function updateProduct_(config, payload) {
   const sku = String(payload.sku || '').trim();
   const name = String(payload.name || '').trim();
+  const sizeVariant = String(payload.sizeVariant || '').trim();
   const category = String(payload.category || 'Other').trim() || 'Other';
   const sellingPrice = Number(payload.sellingPrice);
   const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
   const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
-  if (!sku || !name || name.length > 120 || category.length > 100 || !Number.isInteger(sellingPrice) || sellingPrice < 0) {
+  if (!sku || !name || name.length > 120 || sizeVariant.length > 80 || category.length > 100 || !Number.isInteger(sellingPrice) || sellingPrice < 0) {
     throw apiError_('Enter a cloth name, category, and valid whole-rupee price.', 400);
   }
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
   ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Size / Variant');
   const table = getTable_(config, 'Inventory');
   const row = table.rows.find(function (item) { return String(item.SKU || '').trim() === sku; });
   if (!row) throw apiError_('That cloth was not found in Shop.', 404);
   const duplicate = table.rows.find(function (item) {
-    return String(item.SKU || '').trim() !== sku && String(item['Product Name'] || '').trim().toLowerCase() === name.toLowerCase();
+    return String(item.SKU || '').trim() !== sku &&
+      String(item['Product Name'] || '').trim().toLowerCase() === name.toLowerCase() &&
+      String(item['Size / Variant'] || '').trim().toLowerCase() === sizeVariant.toLowerCase();
   });
-  if (duplicate) throw apiError_('That cloth name already exists. Choose a different name.', 409);
+  if (duplicate) throw apiError_('That cloth name and size / variant already exist.', 409);
   setTableCell_(table, row._rowNumber, 'Product Name', name);
+  setTableCell_(table, row._rowNumber, 'Size / Variant', sizeVariant);
   setTableCell_(table, row._rowNumber, 'Category', category);
   setTableCell_(table, row._rowNumber, 'Selling Price', sellingPrice);
   setTableCell_(table, row._rowNumber, 'Fractional Quantity', fractionalQuantity);
   setTableCell_(table, row._rowNumber, 'Unit', unit);
-  return { sku: sku, name: name, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity, unit: unit };
+  return { sku: sku, name: name, sizeVariant: sizeVariant, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity, unit: unit };
 }
 
 function ensureStockAdjustmentsSheet_(config) {
@@ -554,14 +559,16 @@ function listProducts_(config, query) {
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
   ensureColumn_(config, 'Inventory', 'Unit');
   ensureColumn_(config, 'Inventory', 'Pricing Unit');
+  ensureColumn_(config, 'Inventory', 'Size / Variant');
   const normalizedQuery = query.trim().toLowerCase();
   const table = getTable_(config, 'Inventory');
   const products = table.rows.filter(function (row) {
-    return !normalizedQuery || String(row.SKU).toLowerCase().includes(normalizedQuery) || String(row['Product Name']).toLowerCase().includes(normalizedQuery);
+    return !normalizedQuery || String(row.SKU).toLowerCase().includes(normalizedQuery) || String(row['Product Name']).toLowerCase().includes(normalizedQuery) || String(row['Size / Variant'] || '').toLowerCase().includes(normalizedQuery);
   }).slice(0, 1000).map(function (row) {
     return {
       sku: String(row.SKU),
       name: String(row['Product Name'] || ''),
+      sizeVariant: String(row['Size / Variant'] || ''),
       category: String(row.Category || ''),
       price: Number(row['Selling Price'] || 0),
       stock: Number(row['Current Stock'] || 0),
@@ -1327,7 +1334,9 @@ function createProduct_(config, payload) {
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
   ensureColumn_(config, 'Inventory', 'Unit');
   ensureColumn_(config, 'Inventory', 'Pricing Unit');
+  ensureColumn_(config, 'Inventory', 'Size / Variant');
   const name = String(payload.name || '').trim();
+  const sizeVariant = String(payload.sizeVariant || '').trim();
   const category = String(payload.category || 'Other').trim() || 'Other';
   const sellingPrice = Number(payload.sellingPrice);
   const unitCost = Number(payload.unitCost || 0);
@@ -1335,12 +1344,15 @@ function createProduct_(config, payload) {
   const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
   const pricingUnit = unit === 'PIECE' ? normalizedPricingUnit_(payload.pricingUnit) : '';
   const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
-  if (!name || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isFinite(stock) || stock < 0 || stock > 100000 || (!fractionalQuantity && !Number.isInteger(stock)) || (fractionalQuantity && Math.abs(stock * 1000 - Math.round(stock * 1000)) > 0.000001)) {
+  if (!name || name.length > 120 || sizeVariant.length > 80 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isFinite(stock) || stock < 0 || stock > 100000 || (!fractionalQuantity && !Number.isInteger(stock)) || (fractionalQuantity && Math.abs(stock * 1000 - Math.round(stock * 1000)) > 0.000001)) {
     throw apiError_('Enter a product name, valid prices, and a valid opening quantity.', 400);
   }
   const table = getTable_(config, 'Inventory');
-  const duplicate = table.rows.find(function (row) { return String(row['Product Name']).trim().toLowerCase() === name.toLowerCase(); });
-  if (duplicate) throw apiError_('That product name already exists. SKU: ' + duplicate.SKU, 409);
+  const duplicate = table.rows.find(function (row) {
+    return String(row['Product Name'] || '').trim().toLowerCase() === name.toLowerCase() &&
+      String(row['Size / Variant'] || '').trim().toLowerCase() === sizeVariant.toLowerCase();
+  });
+  if (duplicate) throw apiError_('That product name and size / variant already exist. SKU: ' + duplicate.SKU, 409);
   const sku = newId_('SKU');
   const imageId = saveProductImage_(String(payload.imageBase64 || ''), sku);
   const rowNumber = nextFreeRow_(table);
@@ -1349,6 +1361,7 @@ function createProduct_(config, payload) {
     record: {
       SKU: sku,
       'Product Name': name,
+      'Size / Variant': sizeVariant,
       Category: category,
       Supplier: String(payload.supplier || '').trim(),
       'Unit Cost': unitCost,
@@ -1362,7 +1375,7 @@ function createProduct_(config, payload) {
       Availability: 'Available',
     },
   }], ['Inventory']);
-  return { sku: sku, name: name, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
+  return { sku: sku, name: name, sizeVariant: sizeVariant, price: sellingPrice, stock: stock, imageId: imageId, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit, qrValue: sku };
 }
 
 function normalizedPricingUnit_(value) {
@@ -1424,7 +1437,10 @@ function createInvoice_(config, payload, userEmail) {
     const stock = Number(product['Current Stock']);
     if (!Number.isFinite(stock) || stock < 0) throw apiError_('Stock information is incomplete for ' + product['Product Name'] + '. Ask the manager to update Inventory.', 400);
     if (quantity > stock) throw apiError_('Only ' + stock + ' units of ' + product['Product Name'] + ' are in stock.', 409);
-    const unitPrice = Number(product['Selling Price']);
+    const submittedUnitPrice = item.unitPrice;
+    const unitPrice = submittedUnitPrice === undefined || submittedUnitPrice === null || submittedUnitPrice === ''
+      ? Number(product['Selling Price'])
+      : Number(submittedUnitPrice);
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw apiError_('A valid selling price is missing for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
     const unitCostValue = product['Unit Cost'] === '' ? 0 : Number(product['Unit Cost']);
     if (!Number.isFinite(unitCostValue) || unitCostValue < 0) throw apiError_('Cost information is invalid for ' + product['Product Name'] + '. Ask the manager to correct it before billing.', 400);
