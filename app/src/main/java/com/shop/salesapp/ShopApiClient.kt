@@ -189,7 +189,8 @@ class ShopApiClient(baseUrl: String) {
         sellingPrice: Int,
         fractionalQuantity: Boolean,
         unit: String,
-        sizeVariant: String = ""
+        sizeVariant: String = "",
+        pricingUnit: String = unit
     ) {
         request("updateProduct", idToken, JSONObject()
             .put("sku", sku)
@@ -198,6 +199,7 @@ class ShopApiClient(baseUrl: String) {
             .put("sellingPrice", sellingPrice)
             .put("fractionalQuantity", fractionalQuantity)
             .put("unit", unit)
+            .put("pricingUnit", pricingUnit)
             .put("sizeVariant", sizeVariant))
     }
 

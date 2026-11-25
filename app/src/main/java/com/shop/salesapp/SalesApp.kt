@@ -1177,6 +1177,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         price: Int,
         fractionalQuantity: Boolean,
         unit: String,
+        pricingUnit: String,
         onComplete: (Boolean) -> Unit
     ) {
         val token = idToken
@@ -1188,7 +1189,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         operationScope.launch {
             runCatchingCancellable {
                 withContext(Dispatchers.IO) {
-                    api.updateProduct(token, product.sku, name, category, price, fractionalQuantity, unit, sizeVariant)
+                    api.updateProduct(token, product.sku, name, category, price, fractionalQuantity, unit, sizeVariant, pricingUnit)
                     api.products(token, "")
                 }
             }.onSuccess { fresh ->
@@ -2320,8 +2321,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             } else requestEntryDeletion("PRODUCT", product.sku, product.name)
                         },
                         onProductQr = { qrPreviewProduct = product },
-                        onEdit = { name, sizeVariant, category, price, fractional, unit, complete ->
-                            updateClothDetails(product, name, sizeVariant, category, price, fractional, unit, complete)
+                        onEdit = { name, sizeVariant, category, price, fractional, unit, pricingUnit, complete ->
+                            updateClothDetails(product, name, sizeVariant, category, price, fractional, unit, pricingUnit, complete)
                         },
                         onBack = { navigateBack() }
                     )

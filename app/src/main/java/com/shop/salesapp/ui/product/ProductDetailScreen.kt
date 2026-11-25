@@ -96,7 +96,7 @@ fun ProductDetailScreen(
     onAddStock: (Double, String, (Boolean) -> Unit) -> Unit,
     onDelete: () -> Unit,
     onProductQr: () -> Unit,
-    onEdit: (String, String, String, Int, Boolean, String, (Boolean) -> Unit) -> Unit,
+    onEdit: (String, String, String, Int, Boolean, String, String, (Boolean) -> Unit) -> Unit,
     onBack: () -> Unit
 ) {
     var showEdit by remember(product.sku) { mutableStateOf(false) }
@@ -204,9 +204,9 @@ fun ProductDetailScreen(
             product = product,
             saving = savingEdit,
             onDismiss = { if (!savingEdit) showEdit = false },
-            onSave = { name, sizeVariant, category, price, fractional, unit ->
+            onSave = { name, sizeVariant, category, price, fractional, unit, priceUnit ->
                 savingEdit = true
-                onEdit(name, sizeVariant, category, price, fractional, unit) { success ->
+                onEdit(name, sizeVariant, category, price, fractional, unit, priceUnit) { success ->
                     savingEdit = false
                     if (success) showEdit = false
                 }
@@ -297,15 +297,22 @@ fun EditClothDialog(
     product: Product,
     saving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, Int, Boolean, String) -> Unit
+    onSave: (String, String, String, Int, Boolean, String, String) -> Unit
 ) {
     var name by remember(product.sku) { mutableStateOf(product.name) }
     var sizeVariant by remember(product.sku) { mutableStateOf(product.sizeVariant) }
     var category by remember(product.sku) { mutableStateOf(product.category) }
     var price by remember(product.sku) { mutableStateOf(product.price.toString()) }
     var unit by remember(product.sku) { mutableStateOf(product.quantityUnit()) }
+    var priceUnit by remember(product.sku) { mutableStateOf(product.priceUnit()) }
     var fractional by remember(product.sku) { mutableStateOf(product.fractionalQuantity) }
-    val valid = name.isNotBlank() && category.isNotBlank() && (price.toIntOrNull() ?: -1) >= 0
+    val allowedPriceUnits = when (unit) {
+        "PIECE" -> listOf("PIECE", "METRE", "KG")
+        "METRE" -> listOf("METRE")
+        "KG" -> listOf("KG")
+        else -> emptyList()
+    }
+    val valid = name.isNotBlank() && category.isNotBlank() && (price.toIntOrNull() ?: -1) >= 0 && priceUnit in allowedPriceUnits
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("Edit cloth", "कपड़ा बदलें"), color = Ink, fontWeight = FontWeight.Bold) },
@@ -323,7 +330,7 @@ fun EditClothDialog(
                     price,
                     { price = it.filter(Char::isDigit) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text(if (product.priceUnit() == "PIECE") tr("Selling price (₹)", "बिक्री कीमत (₹)") else tr("Selling price / ${unitShort(product.priceUnit())} (₹)", "बिक्री कीमत / ${unitHindi(product.priceUnit())} (₹)")) },
+                    label = { Text(if (priceUnit == "PIECE") tr("Selling price (₹)", "बिक्री कीमत (₹)") else tr("Selling price / ${unitShort(priceUnit)} (₹)", "बिक्री कीमत / ${unitHindi(priceUnit)} (₹)")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
@@ -331,7 +338,29 @@ fun EditClothDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("PIECE" to tr("Unit", "पीस"), "METRE" to tr("Metre", "मीटर"), "KG" to tr("Kg", "किलो")).forEach { (code, label) ->
                         if (unit == code) Button(onClick = {}, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text(label, maxLines = 1) }
-                        else OutlinedButton(onClick = { unit = code; fractional = code != "PIECE" }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text(label, maxLines = 1) }
+                        else OutlinedButton(onClick = {
+                            unit = code
+                            fractional = code != "PIECE"
+                            val permitted = when (code) {
+                                "PIECE" -> setOf("PIECE", "METRE", "KG")
+                                "METRE" -> setOf("METRE")
+                                else -> setOf("KG")
+                            }
+                            if (priceUnit !in permitted) priceUnit = ""
+                        }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text(label, maxLines = 1) }
+                    }
+                }
+                Text(tr("Price in", "कीमत की इकाई"), color = Ink, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("PIECE" to tr("Unit", "पीस"), "METRE" to tr("Metre", "मीटर"), "KG" to tr("Kg", "किलो")).forEach { (code, label) ->
+                        if (priceUnit == code) Button(onClick = {}, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
+                            Text(label, maxLines = 1)
+                        } else OutlinedButton(
+                            onClick = { priceUnit = code },
+                            enabled = code in allowedPriceUnits,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 3.dp)
+                        ) { Text(label, maxLines = 1) }
                     }
                 }
                 if (unit != "PIECE") Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -342,7 +371,7 @@ fun EditClothDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(name.trim(), sizeVariant.trim(), category.trim(), price.toIntOrNull() ?: 0, fractional, unit) }, enabled = valid && !saving) {
+            TextButton(onClick = { onSave(name.trim(), sizeVariant.trim(), category.trim(), price.toIntOrNull() ?: 0, fractional, unit, priceUnit) }, enabled = valid && !saving) {
                 Text(if (saving) tr("Saving…", "सहेज रहे हैं…") else tr("Save changes", "बदलाव सहेजें"))
             }
         },

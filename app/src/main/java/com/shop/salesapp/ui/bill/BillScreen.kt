@@ -329,7 +329,7 @@ fun BillScreen(
     var showDiscountDialog by remember { mutableStateOf(false) }
     var discountDraft by remember { mutableStateOf("") }
     var editingPriceSku by remember { mutableStateOf<String?>(null) }
-    var priceDraft by remember { mutableStateOf("") }
+    var priceDraft by remember { mutableStateOf(TextFieldValue("")) }
     var manualPriceDraft by remember { mutableStateOf("") }
     var sellAtCostDraft by remember { mutableStateOf(false) }
     var showSavedCustomerPicker by remember { mutableStateOf(false) }
@@ -376,7 +376,8 @@ fun BillScreen(
     val paidNow = if (paymentMode == "Credit") {
         if (creditAmountReceived.isBlank()) 0 else creditAmountReceived.toIntOrNull()
     } else total
-    val validCreditAmount = paymentMode != "Credit" || (paidNow != null && paidNow in 0..total)
+    val validCreditAmount = paymentMode != "Credit" ||
+        (creditAmountReceived.isNotBlank() && paidNow != null && paidNow in 0..total)
     val hasCreditPaymentReceived = paymentMode == "Credit" && paidNow != null && paidNow > 0
     val validPaymentSelection = orderMode || (
         paymentMode in paidPaymentMethods ||
@@ -409,6 +410,7 @@ fun BillScreen(
     val phoneFocusRequester = remember { FocusRequester() }
     val phoneBringIntoViewRequester = remember { BringIntoViewRequester() }
     val creditAmountBringIntoViewRequester = remember { BringIntoViewRequester() }
+    // Credit payment methods are shown in the fixed payment panel after the keyboard closes.
     val billListState = rememberLazyListState()
     val screenScope = rememberCoroutineScope()
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -463,7 +465,9 @@ fun BillScreen(
         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
         contentPadding = PaddingValues(
             top = 8.dp,
-            bottom = if (keyboardVisible) 24.dp else if (!orderMode && cart.isNotEmpty()) 250.dp else 142.dp
+            bottom = if (keyboardVisible) 24.dp else if (!orderMode && cart.isNotEmpty()) {
+                if (isCredit && hasCreditPaymentReceived) 310.dp else 250.dp
+            } else 142.dp
         ),
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
@@ -647,7 +651,8 @@ fun BillScreen(
                                                         if (line.sellAtCost) line.unitPriceBeforeCost ?: line.product.price
                                                         else line.unitPrice
                                                     ).toString()
-                                                    priceDraft = line.unitPrice.toString()
+                                                    val initialPrice = line.unitPrice.toString()
+                                                    priceDraft = TextFieldValue(initialPrice, selection = TextRange(initialPrice.length))
                                                     editingPriceSku = line.product.sku
                                                 } else Modifier
                                             ),
@@ -828,15 +833,6 @@ fun BillScreen(
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
                     shape = RoundedCornerShape(14.dp)
                 )
-                if (hasCreditPaymentReceived) {
-                    Text(tr("Received via", "राशि मिली via"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Cash", "UPI", "Card").forEach { method ->
-                            if (creditPaymentMethod == method) Button(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-                            else OutlinedButton(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(2.dp)) { Text(tr(method, method), fontSize = 14.sp) }
-                        }
-                    }
-                }
                 val dueNow = if (paidNow != null) (total - paidNow).coerceAtLeast(0) else total
                 Text(
                     if (validCreditAmount) tr("Due after this payment: ₹$dueNow", "इस भुगतान के बाद बकाया: ₹$dueNow") else tr("Enter an amount from ₹0 to ₹$total.", "₹0 से ₹$total तक राशि लिखें।"),
@@ -901,6 +897,18 @@ fun BillScreen(
                               }
                           }
                       }
+                      if (isCredit && hasCreditPaymentReceived) {
+                          Text(tr("Received via", "राशि मिली via"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                              listOf("Cash", "UPI", "Card").forEach { method ->
+                                  if (creditPaymentMethod == method) Button(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(1.dp)) {
+                                      Text(tr(method, method), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                  } else OutlinedButton(onClick = { onCreditPaymentMethod(method) }, modifier = Modifier.weight(1f).height(46.dp), contentPadding = PaddingValues(1.dp)) {
+                                      Text(tr(method, method), fontSize = 14.sp)
+                                  }
+                              }
+                          }
+                      }
                   }
               }
           }
@@ -919,7 +927,7 @@ fun BillScreen(
       }
     }
     if (editingPriceSku != null && editingPriceLine != null) {
-        val editedUnitPrice = priceDraft.toIntOrNull()
+        val editedUnitPrice = priceDraft.text.toIntOrNull()
         val belowCost = editedUnitPrice != null && editedUnitPrice < editingPriceLine.product.costPrice
         val editedLineTotal = editedUnitPrice?.let { price ->
             lineAmount(price, editingPriceLine.quantity)
@@ -952,7 +960,8 @@ fun BillScreen(
                             enabled = editingPriceLine.product.costPrice > 0,
                             onCheckedChange = { enabled ->
                                 sellAtCostDraft = enabled
-                                priceDraft = if (enabled) editingPriceLine.product.costPrice.toString() else manualPriceDraft
+                                val nextPrice = if (enabled) editingPriceLine.product.costPrice.toString() else manualPriceDraft
+                                priceDraft = TextFieldValue(nextPrice, selection = TextRange(nextPrice.length))
                             }
                         )
                     }
@@ -960,8 +969,9 @@ fun BillScreen(
                         value = priceDraft,
                         onValueChange = { value ->
                             if (!sellAtCostDraft) {
-                                manualPriceDraft = value.filter { it.isDigit() }
-                                priceDraft = manualPriceDraft
+                                val filtered = value.text.filter { it.isDigit() }
+                                manualPriceDraft = filtered
+                                priceDraft = value.copy(text = filtered)
                             }
                         },
                         modifier = Modifier.fillMaxWidth().focusRequester(priceDialogFocusRequester),

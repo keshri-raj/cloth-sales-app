@@ -449,12 +449,16 @@ function updateProduct_(config, payload) {
   const category = String(payload.category || 'Other').trim() || 'Other';
   const sellingPrice = Number(payload.sellingPrice);
   const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
+  const pricingUnit = normalizedPricingUnit_(payload.pricingUnit) || unit;
   const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
+  const allowedPricingUnits = unit === 'PIECE' ? ['PIECE', 'METRE', 'KG'] : [unit];
+  if (allowedPricingUnits.indexOf(pricingUnit) < 0) throw apiError_('Price unit must match the metre or kg selling unit.', 400);
   if (!sku || !name || name.length > 120 || sizeVariant.length > 80 || category.length > 100 || !Number.isInteger(sellingPrice) || sellingPrice < 0) {
     throw apiError_('Enter a cloth name, category, and valid whole-rupee price.', 400);
   }
   ensureColumn_(config, 'Inventory', 'Fractional Quantity');
   ensureColumn_(config, 'Inventory', 'Unit');
+  ensureColumn_(config, 'Inventory', 'Pricing Unit');
   ensureColumn_(config, 'Inventory', 'Size / Variant');
   const table = getTable_(config, 'Inventory');
   const row = table.rows.find(function (item) { return String(item.SKU || '').trim() === sku; });
@@ -471,7 +475,8 @@ function updateProduct_(config, payload) {
   setTableCell_(table, row._rowNumber, 'Selling Price', sellingPrice);
   setTableCell_(table, row._rowNumber, 'Fractional Quantity', fractionalQuantity);
   setTableCell_(table, row._rowNumber, 'Unit', unit);
-  return { sku: sku, name: name, sizeVariant: sizeVariant, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity, unit: unit };
+  setTableCell_(table, row._rowNumber, 'Pricing Unit', pricingUnit);
+  return { sku: sku, name: name, sizeVariant: sizeVariant, category: category, price: sellingPrice, fractionalQuantity: fractionalQuantity, unit: unit, pricingUnit: pricingUnit };
 }
 
 function ensureStockAdjustmentsSheet_(config) {
@@ -1575,7 +1580,7 @@ function createInvoice_(config, payload, userEmail) {
     resolvedLines.forEach(function (line, index) {
       plans.push({
         title: 'Sales Items', table: salesItems, rowNumber: salesRows[index],
-        record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, Discount: line.discount, Status: 'ACTIVE', Unit: line.unit, 'Pricing Unit': line.pricingUnit, 'Measure Quantity': line.measureQuantity || '' },
+        record: { 'Invoice #': number, SKU: line.sku, Quantity: line.quantity, 'Unit Price': line.unitPrice, Discount: line.discount, Status: 'ACTIVE', Unit: line.unit, 'Pricing Unit': line.pricingUnit, 'Measure Quantity': line.measureQuantity || '' },
       });
     });
     if (amountReceived > 0) {
@@ -1739,7 +1744,6 @@ function formulasForRow_(title, row) {
     Date: '=IF(A' + row + '="","",IFERROR(VLOOKUP(A' + row + ',\'Sales Invoices\'!$A$2:$H$1000,2,FALSE),""))',
     'Product Name': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,2,FALSE),""))',
     Category: '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,3,FALSE),""))',
-    'Unit Price': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,6,FALSE),""))',
     'Line Total': '=IF(OR(C' + row + '="",F' + row + '=""),"",ROUND(MAX(0,IF(AND(N' + row + '<>"",N' + row + '<>M' + row + '),O' + row + ',F' + row + ')*G' + row + '-H' + row + '),0))',
     COGS: '=IF(OR(C' + row + '="",F' + row + '=""),"",IF(AND(N' + row + '<>"",N' + row + '<>M' + row + '),O' + row + ',F' + row + ')*IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,5,FALSE),0))',
     'Gross Profit': '=IF(OR(C' + row + '="",F' + row + '=""),"",I' + row + '-J' + row + ')',
