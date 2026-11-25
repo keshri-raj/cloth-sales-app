@@ -336,6 +336,7 @@ fun BillScreen(
     var savedCustomerQuery by remember { mutableStateOf("") }
     var promptedCustomerPhone by remember { mutableStateOf("") }
     var showClearConfirmation by remember { mutableStateOf(false) }
+    var showCreditAmountExceededDialog by remember { mutableStateOf(false) }
     val subtotal = cart.sumOf { cartLineAmount(it) }
     val costSubtotal = cart.sumOf(::cartLineCostAmount)
     val maxDiscount = (subtotal - costSubtotal).coerceAtLeast(0)
@@ -346,6 +347,18 @@ fun BillScreen(
     val parsedDiscount = discountValue.toDoubleOrNull() ?: 0.0
     val discountAmount = if (billWideAtCost) 0 else parsedDiscount.roundToInt()
     val total = subtotal - discountAmount
+    fun amountExceedsBill(amount: String): Boolean {
+        val normalizedAmount = amount.filter(Char::isDigit).trimStart('0').ifBlank { "0" }
+        val billTotalText = total.coerceAtLeast(0).toString()
+        return normalizedAmount.length > billTotalText.length ||
+            (normalizedAmount.length == billTotalText.length && normalizedAmount > billTotalText)
+    }
+    LaunchedEffect(paymentMode, creditAmountReceived, total) {
+        when {
+            paymentMode != "Credit" || creditAmountReceived.isBlank() -> showCreditAmountExceededDialog = false
+            amountExceedsBill(creditAmountReceived) -> showCreditAmountExceededDialog = true
+        }
+    }
     val validDiscount = billWideAtCost || !discountEnabled || (
         cart.isNotEmpty() && discountValue.toDoubleOrNull() != null && parsedDiscount >= 0 &&
             discountAmount <= maxDiscount && total >= costSubtotal
@@ -360,7 +373,9 @@ fun BillScreen(
     val paidPaymentMethods = setOf("Cash", "UPI", "Card")
     val isCredit = paymentMode == "Credit"
     val paidStatusSelected = paymentMode == "Paid" || paymentMode in paidPaymentMethods
-    val paidNow = if (paymentMode == "Credit") creditAmountReceived.toIntOrNull() else total
+    val paidNow = if (paymentMode == "Credit") {
+        if (creditAmountReceived.isBlank()) 0 else creditAmountReceived.toIntOrNull()
+    } else total
     val validCreditAmount = paymentMode != "Credit" || (paidNow != null && paidNow in 0..total)
     val hasCreditPaymentReceived = paymentMode == "Credit" && paidNow != null && paidNow > 0
     val validPaymentSelection = orderMode || (
@@ -791,10 +806,10 @@ fun BillScreen(
         }
         if (!orderMode && paymentMode == "Credit") item(key = "bill.credit-details") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(tr("Credit payment", "उधार भुगतान"), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(tr("Paying now amount", "अभी भुगतान की राशि"), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 OutlinedTextField(
                     value = creditAmountReceived,
-                    onValueChange = onCreditAmountReceived,
+                    onValueChange = { value -> onCreditAmountReceived(value.filter(Char::isDigit)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .bringIntoViewRequester(creditAmountBringIntoViewRequester)
@@ -807,7 +822,7 @@ fun BillScreen(
                                 }
                             }
                         },
-                    placeholder = { Text(tr("Amount received now (₹)", "अभी मिली राशि (₹)"), color = Muted) },
+                    placeholder = { Text(tr("Enter amount", "राशि दर्ज करें"), color = Muted) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
@@ -1209,6 +1224,16 @@ fun BillScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirmation = false }) { Text(tr("Keep editing", "एडिट जारी रखें")) }
+            }
+        )
+    }
+    if (showCreditAmountExceededDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreditAmountExceededDialog = false },
+            title = { Text(tr("Amount exceeded", "राशि सीमा से अधिक"), color = Ink, fontWeight = FontWeight.Bold) },
+            text = { Text(tr("The amount paid now cannot exceed the bill total of ₹$total.", "अभी भुगतान की राशि बिल की कुल राशि ₹$total से अधिक नहीं हो सकती।"), color = Ink) },
+            confirmButton = {
+                TextButton(onClick = { showCreditAmountExceededDialog = false }) { Text(tr("Okay", "ठीक है")) }
             }
         )
     }

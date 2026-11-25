@@ -22,7 +22,7 @@ internal data class NewClothFormDraft(
     val cost: String = "",
     val stock: String = "",
     val fractionalQuantity: Boolean = false,
-    val unit: String = "PIECE",
+    val unit: String = "",
     val pricingUnit: String = "",
     val photoBase64: String = ""
 )
@@ -37,7 +37,7 @@ internal data class BillFormDraft(
     val paymentMode: String = "",
     val discountValue: String = "",
     val discountEnabled: Boolean = false,
-    val creditAmountReceived: String = "0",
+    val creditAmountReceived: String = "",
     val creditPaymentMethod: String = ""
 )
 
@@ -143,7 +143,7 @@ internal object NewClothFormDraftCache {
                 cost = root.optString("cost"),
                 stock = root.optString("stock"),
                 fractionalQuantity = root.optBoolean("fractionalQuantity", false),
-                unit = root.optString("unit").ifBlank { "PIECE" },
+                unit = root.optString("unit"),
                 pricingUnit = root.optString("pricingUnit"),
                 photoBase64 = root.optString("photoBase64")
             )
@@ -153,7 +153,7 @@ internal object NewClothFormDraftCache {
     fun save(context: Context, draft: NewClothFormDraft) {
         if (draft.name.isBlank() && draft.sizeVariant.isBlank() && draft.category.isBlank() && draft.price.isBlank() &&
             draft.cost.isBlank() && draft.stock.isBlank() && draft.photoBase64.isBlank() &&
-            !draft.fractionalQuantity && draft.unit == "PIECE" && draft.pricingUnit == draft.unit
+            !draft.fractionalQuantity && draft.unit.isBlank() && draft.pricingUnit.isBlank()
         ) {
             clear(context)
             return
@@ -227,7 +227,7 @@ internal object BillFormDraftCache {
                 paymentMode = root.optString("paymentMode"),
                 discountValue = root.optString("discountValue"),
                 discountEnabled = root.optBoolean("discountEnabled", false),
-                creditAmountReceived = root.optString("creditAmountReceived", "0"),
+                creditAmountReceived = root.optString("creditAmountReceived").takeUnless { it == "0" }.orEmpty(),
                 creditPaymentMethod = root.optString("creditPaymentMethod")
             )
         }.getOrNull()
@@ -236,7 +236,7 @@ internal object BillFormDraftCache {
     fun save(context: Context, draft: BillFormDraft) {
         if (draft.customerName.isBlank() && draft.customerPhone.isBlank() && draft.customerEmail.isBlank() &&
             draft.customerAddress.isBlank() && draft.items.isEmpty() && draft.paymentMode.isBlank() &&
-            draft.discountValue.isBlank() && !draft.discountEnabled && draft.creditAmountReceived == "0" &&
+            draft.discountValue.isBlank() && !draft.discountEnabled && draft.creditAmountReceived.isBlank() &&
             draft.creditPaymentMethod.isBlank()
         ) {
             clear(context)

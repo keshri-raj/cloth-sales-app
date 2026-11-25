@@ -132,6 +132,14 @@ fun AddProductScreen(
     val stockPrecisionValid = parsedStock != null && kotlin.math.abs(parsedStock * 1000 - (parsedStock * 1000).roundToInt()) < 0.001
     val validOpeningStock = parsedStock != null && parsedStock >= 0 && parsedStock <= 100000 &&
         stockPrecisionValid && (fractionalQuantity || parsedStock % 1.0 == 0.0)
+    val allowedPriceUnits = when (unit) {
+        "PIECE" -> setOf("PIECE", "METRE", "KG")
+        "METRE" -> setOf("METRE")
+        "KG" -> setOf("KG")
+        else -> emptySet()
+    }
+    val canSelectPriceUnit = unit.isNotBlank()
+    val canEnterPrice = pricingUnit in allowedPriceUnits
     Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
         Column(
             Modifier
@@ -215,12 +223,17 @@ fun AddProductScreen(
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(tr("Price in", "कीमत की इकाई"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (canSelectPriceUnit) tr("Price in", "कीमत की इकाई") else tr("Price in · select Sold in first", "कीमत की इकाई · पहले बेचने की इकाई चुनें"),
+                        color = if (canSelectPriceUnit) Ink else Muted,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         listOf("PIECE" to tr("Unit", "पीस"), "METRE" to tr("Metre", "मीटर"), "KG" to tr("Kg", "किलो")).forEach { (code, label) ->
-                            if (pricingUnit == code) Button(onClick = { }, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                            if (pricingUnit == code) Button(onClick = { }, enabled = canSelectPriceUnit, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
                                 Text(label, maxLines = 1, fontSize = 14.sp)
-                            } else OutlinedButton(onClick = { onPricingUnit(code) }, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                            } else OutlinedButton(onClick = { onPricingUnit(code) }, enabled = code in allowedPriceUnits, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
                                 Text(label, maxLines = 1, fontSize = 14.sp)
                             }
                         }
@@ -233,7 +246,7 @@ fun AddProductScreen(
                         stock, onStock, Modifier.weight(0.9f).focusRequester(stockFocus).bringIntoViewRequester(stockBringIntoView).onFocusChanged {
                             if (it.isFocused) bringFocusedFieldIntoView(stockBringIntoView)
                         },
-                        label = { Text(tr("Stock (${unitShort(unit)})", "स्टॉक (${unitHindi(unit)})"), maxLines = 1, fontSize = 13.sp) },
+                        label = { Text(if (unit.isBlank()) tr("Stock", "स्टॉक") else tr("Stock (${unitShort(unit)})", "स्टॉक (${unitHindi(unit)})"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = if (fractionalQuantity) KeyboardType.Decimal else KeyboardType.Number, imeAction = ImeAction.Next),
                         keyboardActions = KeyboardActions(onNext = { costFocus.requestFocus() }),
@@ -253,7 +266,8 @@ fun AddProductScreen(
                         cost, onCost, Modifier.weight(1f).focusRequester(costFocus).bringIntoViewRequester(costBringIntoView).onFocusChanged {
                             if (it.isFocused) bringFocusedFieldIntoView(costBringIntoView)
                         },
-                        label = { Text(tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        enabled = canEnterPrice,
+                        label = { Text(if (pricingUnit.isBlank()) tr("Cost price (₹)", "लागत कीमत (₹)") else tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                         keyboardActions = KeyboardActions(onNext = { priceFocus.requestFocus() }),
@@ -263,7 +277,8 @@ fun AddProductScreen(
                         price, onPrice, Modifier.weight(1f).focusRequester(priceFocus).bringIntoViewRequester(priceBringIntoView).onFocusChanged {
                             if (it.isFocused) bringFocusedFieldIntoView(priceBringIntoView)
                         },
-                        label = { Text(tr("Selling price / ${unitShort(pricingUnit)} ₹", "विक्रय मूल्य / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        enabled = canEnterPrice,
+                        label = { Text(if (pricingUnit.isBlank()) tr("Selling price (₹)", "विक्रय कीमत (₹)") else tr("Selling price / ${unitShort(pricingUnit)} ₹", "विक्रय मूल्य / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus() }),
@@ -274,7 +289,7 @@ fun AddProductScreen(
         }
         Button(
             onClick = onSave,
-            enabled = !saving && name.isNotBlank() && category.isNotBlank() && price.isNotBlank() && cost.isNotBlank() && validOpeningStock,
+            enabled = !saving && name.isNotBlank() && category.isNotBlank() && unit.isNotBlank() && canEnterPrice && price.isNotBlank() && cost.isNotBlank() && validOpeningStock,
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp).height(58.dp),
             shape = RoundedCornerShape(16.dp)
         ) {

@@ -243,7 +243,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var customerSearching by remember { mutableStateOf(false) }
     var customerMatches by remember { mutableStateOf<List<ShopCustomer>>(emptyList()) }
     var paymentMode by remember { mutableStateOf("") }
-    var creditAmountReceived by remember { mutableStateOf("0") }
+    var creditAmountReceived by remember { mutableStateOf("") }
     var creditPaymentMethod by remember { mutableStateOf("") }
     var billDiscountValue by remember { mutableStateOf("") }
     var billDiscountEnabled by remember { mutableStateOf(false) }
@@ -256,8 +256,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var unitCost by remember { mutableStateOf("") }
     var openingStock by remember { mutableStateOf("") }
     var fractionalQuantity by remember { mutableStateOf(false) }
-    var productUnit by remember { mutableStateOf("PIECE") }
-    var productPricingUnit by remember { mutableStateOf("PIECE") }
+    var productUnit by remember { mutableStateOf("") }
+    var productPricingUnit by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var userRole by remember { mutableStateOf("SALESPERSON") }
     var isAuthenticated by remember { mutableStateOf(false) }
@@ -426,7 +426,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 stock = openingStock,
                 fractionalQuantity = fractionalQuantity,
                 unit = productUnit,
-                pricingUnit = productPricingUnit.ifBlank { productUnit },
+                pricingUnit = productPricingUnit,
                 photoBase64 = productImageBase64
             )
         )
@@ -491,7 +491,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         paymentMode = draft?.paymentMode.orEmpty()
         billDiscountValue = draft?.discountValue.orEmpty()
         billDiscountEnabled = draft?.discountEnabled ?: false
-        creditAmountReceived = draft?.creditAmountReceived ?: "0"
+        creditAmountReceived = draft?.creditAmountReceived?.takeUnless { it == "0" }.orEmpty()
         creditPaymentMethod = draft?.creditPaymentMethod.orEmpty()
         orderMode = false
     }
@@ -505,8 +505,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         unitCost = draft?.cost.orEmpty()
         openingStock = draft?.stock.orEmpty()
         fractionalQuantity = draft?.fractionalQuantity ?: false
-        productUnit = draft?.unit ?: "PIECE"
-        productPricingUnit = draft?.pricingUnit?.takeIf { it.isNotBlank() } ?: productUnit
+        productUnit = draft?.unit.orEmpty()
+        productPricingUnit = draft?.pricingUnit.orEmpty()
         productImageBase64 = draft?.photoBase64.orEmpty()
         productImageBitmap = runCatching {
             if (productImageBase64.isBlank()) null else {
@@ -1762,7 +1762,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     stock = openingStock,
                     fractionalQuantity = fractionalQuantity,
                     unit = productUnit,
-                    pricingUnit = productPricingUnit.ifBlank { productUnit },
+                    pricingUnit = productPricingUnit,
                     photo = productImageBitmap,
                     onTakePhoto = { productPhotoActions.takePhoto() },
                     onChoosePhoto = { productPhotoActions.choosePhoto() },
@@ -1774,10 +1774,15 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onStock = { openingStock = it },
                     onFractionalQuantity = { fractionalQuantity = it },
                     onUnit = { unit ->
-                        val oldUnit = productUnit
                         productUnit = unit
                         fractionalQuantity = unit != "PIECE"
-                        if (productPricingUnit.isBlank() || productPricingUnit == oldUnit) productPricingUnit = unit
+                        val allowedPriceUnits = when (unit) {
+                            "PIECE" -> setOf("PIECE", "METRE", "KG")
+                            "METRE" -> setOf("METRE")
+                            "KG" -> setOf("KG")
+                            else -> emptySet()
+                        }
+                        if (productPricingUnit !in allowedPriceUnits) productPricingUnit = ""
                     },
                     onPricingUnit = { productPricingUnit = it },
                     onBack = { navigateBack() },
@@ -1789,8 +1794,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         unitCost = ""
                         openingStock = ""
                         fractionalQuantity = false
-                        productUnit = "PIECE"
-                        productPricingUnit = "PIECE"
+                        productUnit = ""
+                        productPricingUnit = ""
                         productImageBase64 = ""
                         productImageBitmap = null
                         NewClothFormDraftCache.clear(context)
@@ -1799,13 +1804,15 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         val token = idToken
                         if (!api.isConfigured) message = "Connect the Shop API before saving clothes."
                         else if (productCategory.isBlank()) message = "Choose a category before saving this cloth."
+                        else if (productUnit.isBlank()) message = "Choose what this cloth is sold in."
+                        else if (productPricingUnit.isBlank()) message = "Choose what the price is measured in."
                         else if (token == null) beginSignIn(returnTo = Screen.AddProduct)
                         else if (!savingCloth) operationScope.launch {
                             savingCloth = true
                             try {
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
-                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit.ifBlank { productUnit }, productSizeVariant)
+                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit, productSizeVariant)
                                     }
                                 }.onSuccess { created ->
                                     NewClothFormDraftCache.clear(context)
@@ -1881,7 +1888,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     },
                     onPaymentMode = { mode ->
                         if (mode == "Credit" && paymentMode != "Credit") {
-                            creditAmountReceived = "0"
+                            creditAmountReceived = ""
                             creditPaymentMethod = ""
                         }
                         paymentMode = mode
@@ -2085,7 +2092,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                     customerExists = null
                                     customerMatches = emptyList()
                                     paymentMode = ""
-                                    creditAmountReceived = "0"
+                                    creditAmountReceived = ""
                                     creditPaymentMethod = ""
                                     billDiscountValue = ""
                                     billDiscountEnabled = false
@@ -2107,7 +2114,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         customerExists = null
                         customerMatches = emptyList()
                         paymentMode = ""
-                        creditAmountReceived = "0"
+                        creditAmountReceived = ""
                         creditPaymentMethod = ""
                         billDiscountValue = ""
                         billDiscountEnabled = false
@@ -2360,7 +2367,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             onFinishProductCreation = {
                 NewClothFormDraftCache.clear(context)
                 createdQrSku = null
-                productName = ""; productSizeVariant = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = "PIECE"
+                productName = ""; productSizeVariant = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = ""; productPricingUnit = ""
                 backStack.clear(); selectedTab = 0; screen = Screen.Home
             },
             onCreatedQrProductMissing = {
