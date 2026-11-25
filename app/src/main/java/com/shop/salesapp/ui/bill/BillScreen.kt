@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.AccountCircle
@@ -337,6 +338,7 @@ fun BillScreen(
     var promptedCustomerPhone by remember { mutableStateOf("") }
     var showClearConfirmation by remember { mutableStateOf(false) }
     var showCreditAmountExceededDialog by remember { mutableStateOf(false) }
+    var creditAmountFocused by remember { mutableStateOf(false) }
     val subtotal = cart.sumOf { cartLineAmount(it) }
     val costSubtotal = cart.sumOf(::cartLineCostAmount)
     val maxDiscount = (subtotal - costSubtotal).coerceAtLeast(0)
@@ -408,6 +410,7 @@ fun BillScreen(
     val discountDialogFocusRequester = remember { FocusRequester() }
     val priceDialogFocusRequester = remember { FocusRequester() }
     val phoneFocusRequester = remember { FocusRequester() }
+    val creditAmountFocusRequester = remember { FocusRequester() }
     val phoneBringIntoViewRequester = remember { BringIntoViewRequester() }
     val creditAmountBringIntoViewRequester = remember { BringIntoViewRequester() }
     // Credit payment methods are shown in the fixed payment panel after the keyboard closes.
@@ -415,6 +418,17 @@ fun BillScreen(
     val screenScope = rememberCoroutineScope()
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val dialogContentMaxHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).coerceAtLeast(180f).dp
+    fun focusCreditAmount() {
+        focusManager.clearFocus(force = true)
+        onPaymentMode("Credit")
+        screenScope.launch {
+            delay(180)
+            billListState.animateScrollToItem(4)
+            delay(350)
+            creditAmountFocusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
     LaunchedEffect(shouldScrollToDiscount, orderMode, cart.size) {
         if (shouldScrollToDiscount && !orderMode && cart.isNotEmpty()) {
             delay(250)
@@ -817,11 +831,15 @@ fun BillScreen(
                     onValueChange = { value -> onCreditAmountReceived(value.filter(Char::isDigit)) },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusRequester(creditAmountFocusRequester)
                         .bringIntoViewRequester(creditAmountBringIntoViewRequester)
                         .onFocusChanged { focusState ->
+                            creditAmountFocused = focusState.isFocused
                             if (focusState.isFocused) {
                                 screenScope.launch {
                                     delay(180)
+                                    creditAmountBringIntoViewRequester.bringIntoView()
+                                    delay(120)
                                     creditAmountBringIntoViewRequester.bringIntoView()
                                     keyboard?.show()
                                 }
@@ -830,6 +848,10 @@ fun BillScreen(
                     placeholder = { Text(tr("Enter amount", "राशि दर्ज करें"), color = Muted) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardActions = KeyboardActions(onDone = {
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    }),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp),
                     shape = RoundedCornerShape(14.dp)
                 )
@@ -841,7 +863,7 @@ fun BillScreen(
             }
         }
       }
-      if (!keyboardVisible) Column(
+      if (!keyboardVisible && !creditAmountFocused) Column(
           Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Paper).padding(horizontal = 14.dp, vertical = 8.dp),
           verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
@@ -866,20 +888,14 @@ fun BillScreen(
                           }
                           if (isCredit) {
                               Button(
-                                  onClick = { onPaymentMode("Credit") },
+                                  onClick = { focusCreditAmount() },
                                   modifier = Modifier.weight(1f).height(48.dp),
                                   contentPadding = PaddingValues(2.dp),
                                   shape = RoundedCornerShape(12.dp)
                               ) { Text(tr("Due / credit", "बाकी / उधार"), fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
                           } else {
                               OutlinedButton(
-                                  onClick = {
-                                      onPaymentMode("Credit")
-                                      screenScope.launch {
-                                          delay(150)
-                                          billListState.animateScrollToItem(4)
-                                      }
-                                  },
+                                  onClick = { focusCreditAmount() },
                                   modifier = Modifier.weight(1f).height(48.dp),
                                   contentPadding = PaddingValues(2.dp),
                                   shape = RoundedCornerShape(12.dp)
