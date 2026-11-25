@@ -22,6 +22,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -114,7 +115,14 @@ fun CustomerDirectoryScreen(
         itemsIndexed(results, key = { index, customer -> "customer:$index:${customer.id}:${customer.phone}" }) { _, customer ->
             Card(onClick = { onCustomer(customer) }, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color(0xFFE1E8E7))) {
                 Column(Modifier.fillMaxWidth().padding(15.dp)) {
-                    Text(customer.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(customer.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
+                        if (customer.customerType.equals("Shop Owner", ignoreCase = true)) {
+                            Surface(shape = RoundedCornerShape(50), color = Color(0xFFFFF0DF)) {
+                                Text(tr("Shop Owner", "दुकान मालिक"), color = Color(0xFF9A4D00), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
+                            }
+                        }
+                    }
                     Text(customer.phone, fontSize = 16.sp, color = Teal)
                     if (customer.email.isNotBlank()) Text(customer.email, fontSize = 14.sp, color = Muted)
                 }

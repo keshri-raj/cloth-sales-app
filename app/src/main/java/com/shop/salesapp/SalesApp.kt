@@ -127,6 +127,7 @@ import com.shop.salesapp.ui.model.applyPaymentAllocations
 import com.shop.salesapp.ui.model.confirmOptimisticPayment
 import com.shop.salesapp.ui.model.formatQuantity
 import com.shop.salesapp.ui.model.lineAmount
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
 import com.shop.salesapp.ui.model.mergeLocalPaymentLog
 import com.shop.salesapp.ui.model.mergePaymentHistory
 import com.shop.salesapp.ui.model.newLocalPayment
@@ -256,7 +257,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var openingStock by remember { mutableStateOf("") }
     var fractionalQuantity by remember { mutableStateOf(false) }
     var productUnit by remember { mutableStateOf("PIECE") }
-    var productPricingUnit by remember { mutableStateOf("") }
+    var productPricingUnit by remember { mutableStateOf("PIECE") }
     var message by remember { mutableStateOf<String?>(null) }
     var userRole by remember { mutableStateOf("SALESPERSON") }
     var isAuthenticated by remember { mutableStateOf(false) }
@@ -307,6 +308,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     var newCustomerPhone by remember { mutableStateOf("") }
     var newCustomerEmail by remember { mutableStateOf("") }
     var newCustomerAddress by remember { mutableStateOf("") }
+    var newCustomerIsShopOwner by remember { mutableStateOf(false) }
     var savingCustomer by remember { mutableStateOf(false) }
     val cart = remember { mutableStateListOf<CartLine>() }
     val bills = remember(context) { mutableStateListOf<ShopInvoice>().apply { addAll(BillCache.load(context)) } }
@@ -321,13 +323,14 @@ internal fun SalesApp(operationScope: CoroutineScope) {
     val lastAccount = remember { GoogleSignIn.getLastSignedInAccount(context) }
     var idToken by remember { mutableStateOf(lastAccount?.idToken) }
 
-    fun cacheCustomerImmediately(name: String, phone: String, email: String, address: String): ShopCustomer {
-        val pending = PendingCustomer(name.trim(), phone.trim(), email.trim(), address.trim())
+    fun cacheCustomerImmediately(name: String, phone: String, email: String, address: String, customerType: String = "Retail"): ShopCustomer {
+        val pending = PendingCustomer(name.trim(), phone.trim(), email.trim(), address.trim(), customerType)
         val local = ShopCustomer(
             id = "LOCAL-${CustomerCache.normalizePhone(pending.phone)}",
             name = pending.name,
             phone = pending.phone,
-            email = pending.email
+            email = pending.email,
+            customerType = pending.customerType
         )
         CustomerCache.enqueue(context, pending)
         val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(local))
@@ -354,7 +357,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             CustomerCache.loadPending(context).forEach { pending ->
                 val synced = withContext(Dispatchers.IO) {
                     api.findCustomer(token, pending.phone)
-                        ?: api.createCustomer(token, pending.name, pending.phone, pending.email, pending.address)
+                        ?: api.createCustomer(token, pending.name, pending.phone, pending.email, pending.address, pending.customerType)
                 }
                 val merged = CustomerCache.merge(cachedCustomers.toList(), listOf(synced))
                 cachedCustomers.clear()
@@ -423,7 +426,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 stock = openingStock,
                 fractionalQuantity = fractionalQuantity,
                 unit = productUnit,
-                pricingUnit = "",
+                pricingUnit = productPricingUnit.ifBlank { productUnit },
                 photoBase64 = productImageBase64
             )
         )
@@ -503,7 +506,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
         openingStock = draft?.stock.orEmpty()
         fractionalQuantity = draft?.fractionalQuantity ?: false
         productUnit = draft?.unit ?: "PIECE"
-        productPricingUnit = ""
+        productPricingUnit = draft?.pricingUnit?.takeIf { it.isNotBlank() } ?: productUnit
         productImageBase64 = draft?.photoBase64.orEmpty()
         productImageBitmap = runCatching {
             if (productImageBase64.isBlank()) null else {
@@ -1686,7 +1689,9 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                 }
                 Screen.AddCustomer -> AddCustomerScreen(
                     padding = insets, name = newCustomerName, phone = newCustomerPhone, email = newCustomerEmail,
-                    address = newCustomerAddress, saving = savingCustomer, connected = api.isConfigured && idToken != null,
+                    address = newCustomerAddress, isShopOwner = newCustomerIsShopOwner,
+                    onShopOwnerChange = { newCustomerIsShopOwner = it },
+                    saving = savingCustomer, connected = api.isConfigured && idToken != null,
                     onName = { newCustomerName = it }, onPhone = { newCustomerPhone = it },
                     onEmail = { newCustomerEmail = it }, onAddress = { newCustomerAddress = it },
                     onBack = { navigateBack() },
@@ -1696,8 +1701,12 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onSave = {
                         val token = idToken
                         if (!savingCustomer) {
-                            val local = cacheCustomerImmediately(newCustomerName, newCustomerPhone, newCustomerEmail, newCustomerAddress)
+                            val local = cacheCustomerImmediately(
+                                newCustomerName, newCustomerPhone, newCustomerEmail, newCustomerAddress,
+                                if (newCustomerIsShopOwner) "Shop Owner" else "Retail"
+                            )
                             customerDirectoryQuery = ""
+                            newCustomerIsShopOwner = false
                             savingCustomer = false
                             message = "${local.name} saved on this phone${if (token != null && api.isConfigured) "; syncing to Shop." else "; it will sync when connected."}"
                             navigateBack()
@@ -1728,7 +1737,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onAddToBill = { product ->
                         val index = cart.indexOfFirst { it.product.sku == product.sku }
                         val step = if (product.fractionalQuantity) 0.1 else 1.0
-                        if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
+                        if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.requiresMeasuredQuantity()) null else cart[index].measureQuantity)
                         else cart.add(cartLineForAddedProduct(product, if (orderMode) step else minOf(step, product.stock)))
                         if (!orderMode) billShouldScrollToDiscount = true
                         if (orderMode) {
@@ -1753,6 +1762,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     stock = openingStock,
                     fractionalQuantity = fractionalQuantity,
                     unit = productUnit,
+                    pricingUnit = productPricingUnit.ifBlank { productUnit },
                     photo = productImageBitmap,
                     onTakePhoto = { productPhotoActions.takePhoto() },
                     onChoosePhoto = { productPhotoActions.choosePhoto() },
@@ -1764,10 +1774,12 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                     onStock = { openingStock = it },
                     onFractionalQuantity = { fractionalQuantity = it },
                     onUnit = { unit ->
+                        val oldUnit = productUnit
                         productUnit = unit
                         fractionalQuantity = unit != "PIECE"
-                        if (unit != "PIECE") productPricingUnit = ""
+                        if (productPricingUnit.isBlank() || productPricingUnit == oldUnit) productPricingUnit = unit
                     },
+                    onPricingUnit = { productPricingUnit = it },
                     onBack = { navigateBack() },
                     onClear = {
                         productName = ""
@@ -1778,7 +1790,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                         openingStock = ""
                         fractionalQuantity = false
                         productUnit = "PIECE"
-                        productPricingUnit = ""
+                        productPricingUnit = "PIECE"
                         productImageBase64 = ""
                         productImageBitmap = null
                         NewClothFormDraftCache.clear(context)
@@ -1793,7 +1805,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             try {
                                 runCatchingCancellable {
                                     withContext(Dispatchers.IO) {
-                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, "", productSizeVariant)
+                                        api.createProduct(token, productName, productCategory, sellingPrice.toDouble(), unitCost.toDouble(), openingStock.toDouble(), productImageBase64, fractionalQuantity, productUnit, productPricingUnit.ifBlank { productUnit }, productSizeVariant)
                                     }
                                 }.onSuccess { created ->
                                     NewClothFormDraftCache.clear(context)
@@ -1902,7 +1914,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                     else {
                                         val index = cart.indexOfFirst { it.product.sku == cached.sku }
                                         val step = if (cached.fractionalQuantity) 0.1 else 1.0
-                                        if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(cached.stock), measureQuantity = if (cached.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
+                                        if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(cached.stock), measureQuantity = if (cached.requiresMeasuredQuantity()) null else cart[index].measureQuantity)
                                         else cart.add(cartLineForAddedProduct(cached, if (orderMode) step else minOf(step, cached.stock)))
                                         query = scannedCode
                                     }
@@ -1921,7 +1933,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                                     ProductCache.save(context, merged)
                                                     val index = cart.indexOfFirst { it.product.sku == product.sku }
                                                     val step = if (product.fractionalQuantity) 0.1 else 1.0
-                                                    if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
+                                                    if (index >= 0) cart[index] = cart[index].copy(quantity = if (orderMode) cart[index].quantity + step else (cart[index].quantity + step).coerceAtMost(product.stock), measureQuantity = if (product.requiresMeasuredQuantity()) null else cart[index].measureQuantity)
                                                     else cart.add(cartLineForAddedProduct(product, if (orderMode) step else minOf(step, product.stock)))
                                                 }
                                             }
@@ -1946,14 +1958,18 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                             val line = cart[index]
                             val newQuantity = if (orderMode) line.quantity + change else (line.quantity + change).coerceAtMost(line.product.stock)
                             if (newQuantity <= 0) cart.removeAt(index)
-                            else cart[index] = line.copy(quantity = newQuantity, measureQuantity = if (line.product.pricingUnit.isNotBlank()) null else line.measureQuantity)
+                            else cart[index] = line.copy(quantity = newQuantity, measureQuantity = if (line.product.requiresMeasuredQuantity()) null else line.measureQuantity)
                         }
                     },
                     onSetQuantity = { sku, newQuantity ->
                         val index = cart.indexOfFirst { it.product.sku == sku }
                         if (index >= 0 && newQuantity >= 0 && (orderMode || newQuantity <= cart[index].product.stock)) {
-                            cart[index] = cart[index].copy(quantity = newQuantity, measureQuantity = if (cart[index].product.pricingUnit.isNotBlank()) null else cart[index].measureQuantity)
+                            cart[index] = cart[index].copy(quantity = newQuantity, measureQuantity = if (cart[index].product.requiresMeasuredQuantity()) null else cart[index].measureQuantity)
                         }
+                    },
+                    onSetMeasuredQuantity = { sku, measuredQuantity ->
+                        val index = cart.indexOfFirst { it.product.sku == sku }
+                        if (index >= 0 && measuredQuantity > 0) cart[index] = cart[index].copy(measureQuantity = measuredQuantity)
                     },
                     onRemoveCartItem = { sku -> cart.removeAll { it.product.sku == sku } },
                     onSetUnitPrice = { sku, price, sellAtCost ->
@@ -2044,8 +2060,8 @@ internal fun SalesApp(operationScope: CoroutineScope) {
                                                 lineTotal = cartLineAmount(line),
                                                 fractionalQuantity = line.product.fractionalQuantity,
                                                 unit = line.product.unit,
-                                                measureQuantity = 0.0,
-                                                pricingUnit = ""
+                                                measureQuantity = line.measureQuantity ?: 0.0,
+                                                pricingUnit = line.product.pricingUnit
                                             )
                                         } }
                                     )
@@ -2344,7 +2360,7 @@ internal fun SalesApp(operationScope: CoroutineScope) {
             onFinishProductCreation = {
                 NewClothFormDraftCache.clear(context)
                 createdQrSku = null
-                productName = ""; productSizeVariant = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = ""
+                productName = ""; productSizeVariant = ""; productCategory = ""; sellingPrice = ""; unitCost = ""; openingStock = ""; fractionalQuantity = false; productUnit = "PIECE"; productPricingUnit = "PIECE"
                 backStack.clear(); selectedTab = 0; screen = Screen.Home
             },
             onCreatedQrProductMissing = {

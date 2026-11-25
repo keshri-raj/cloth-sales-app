@@ -153,7 +153,7 @@ internal object NewClothFormDraftCache {
     fun save(context: Context, draft: NewClothFormDraft) {
         if (draft.name.isBlank() && draft.sizeVariant.isBlank() && draft.category.isBlank() && draft.price.isBlank() &&
             draft.cost.isBlank() && draft.stock.isBlank() && draft.photoBase64.isBlank() &&
-            !draft.fractionalQuantity && draft.unit == "PIECE" && draft.pricingUnit.isBlank()
+            !draft.fractionalQuantity && draft.unit == "PIECE" && draft.pricingUnit == draft.unit
         ) {
             clear(context)
             return

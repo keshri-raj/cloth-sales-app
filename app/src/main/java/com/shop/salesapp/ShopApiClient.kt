@@ -1,6 +1,7 @@
 package com.shop.salesapp
 
 import com.shop.salesapp.ui.model.CartLine
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
 import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Base64
@@ -37,7 +38,7 @@ data class DeletionRequest(
     val decisionNote: String = ""
 )
 
-data class ShopCustomer(val id: String, val name: String, val phone: String, val email: String)
+data class ShopCustomer(val id: String, val name: String, val phone: String, val email: String, val customerType: String = "Retail")
 data class CreatedProduct(val sku: String, val name: String, val price: Int, val stock: Double, val imageId: String, val fractionalQuantity: Boolean = false, val unit: String = if (fractionalQuantity) "METRE" else "PIECE", val pricingUnit: String = "", val sizeVariant: String = "", val dateAdded: String = "", val costPrice: Int = 0)
 data class CreatedInvoice(
     val invoiceNumber: String, val total: Int, val pdfUrl: String, val paid: Int, val due: Int,
@@ -217,7 +218,7 @@ class ShopApiClient(baseUrl: String) {
     fun findCustomer(idToken: String, phone: String): ShopCustomer? {
         val response = request("findCustomer", idToken, JSONObject().put("phone", phone))
         val row = response.optJSONObject("customer") ?: return null
-        return ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"))
+        return ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"), row.optString("customerType", "Retail"))
     }
 
     fun searchCustomers(idToken: String, phonePrefix: String): List<ShopCustomer> {
@@ -225,7 +226,7 @@ class ShopApiClient(baseUrl: String) {
         val rows = response.optJSONArray("customers") ?: JSONArray()
         return (0 until rows.length()).mapNotNull { index ->
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
-            ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"))
+            ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"), row.optString("customerType", "Retail"))
         }
     }
 
@@ -257,7 +258,7 @@ class ShopApiClient(baseUrl: String) {
         val rows = response.optJSONArray("customers") ?: JSONArray()
         return (0 until rows.length()).mapNotNull { index ->
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
-            ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"))
+            ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"), row.optString("customerType", "Retail"))
         }
     }
 
@@ -351,10 +352,10 @@ class ShopApiClient(baseUrl: String) {
         }
     }
 
-    fun createCustomer(idToken: String, name: String, phone: String, email: String, address: String): ShopCustomer {
-        val payload = JSONObject().put("name", name).put("phone", phone).put("email", email).put("address", address)
+    fun createCustomer(idToken: String, name: String, phone: String, email: String, address: String, customerType: String = "Retail"): ShopCustomer {
+        val payload = JSONObject().put("name", name).put("phone", phone).put("email", email).put("address", address).put("customerType", customerType)
         val row = request("createCustomer", idToken, payload).optJSONObject("customer") ?: JSONObject()
-        return ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"))
+        return ShopCustomer(row.optString("id"), row.optString("name"), row.optString("phone"), row.optString("email"), row.optString("customerType", customerType))
     }
 
     fun productImage(idToken: String, imageId: String): ByteArray? {
@@ -411,7 +412,7 @@ class ShopApiClient(baseUrl: String) {
     ): CreatedInvoice {
         val lineItems = JSONArray()
         items.forEach { line ->
-            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", line.quantity).put("unitPrice", line.unitPrice).put("sellAtCost", line.sellAtCost).put("discount", 0))
+            lineItems.put(JSONObject().put("sku", line.product.sku).put("quantity", line.quantity).put("measureQuantity", if (line.product.requiresMeasuredQuantity()) line.measureQuantity ?: 0.0 else line.quantity).put("unitPrice", line.unitPrice).put("sellAtCost", line.sellAtCost).put("discount", 0))
         }
         val body = JSONObject()
             .put("customer", JSONObject().put("name", customerName).put("phone", customerPhone).put("email", customerEmail).put("address", customerAddress))

@@ -1,5 +1,9 @@
 package com.shop.salesapp
 
+import com.shop.salesapp.ui.model.priceUnit
+import com.shop.salesapp.ui.model.quantityUnit
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
+import com.shop.salesapp.ui.model.unitShort
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -92,13 +96,12 @@ object InvoicePdfGenerator {
                 drawText(c, (itemIndex + 1).toString(), 46f, y, 9f, muted)
                 lines.forEachIndexed { index, text -> drawText(c, text, 72f, y + index * 13f, 10f, navy, bold = index == 0) }
                 if (item.sku.isNotBlank()) drawText(c, item.sku, 72f, y + 28f, 7.5f, muted)
-                val billedQuantity = if (item.pricingUnit.isNotBlank() && item.measureQuantity > 0) item.measureQuantity else item.quantity
-                val quantityUnit = when ((item.pricingUnit.ifBlank { item.unit }).uppercase(Locale.ROOT)) {
-                    "METRE" -> "m"
-                    "KG" -> "kg"
-                    else -> "pc"
+                val quantityLabel = if (item.requiresMeasuredQuantity() && item.measureQuantity > 0) {
+                    "${formatQuantity(item.quantity)} ${unitShort(item.quantityUnit())} · ${formatQuantity(item.measureQuantity)} ${unitShort(item.priceUnit())}"
+                } else {
+                    "${formatQuantity(item.quantity)} ${unitShort(item.quantityUnit())}"
                 }
-                drawText(c, "${formatQuantity(billedQuantity)} $quantityUnit", 346f, y + 4f, 9f, muted, align = Paint.Align.RIGHT)
+                drawText(c, quantityLabel, 346f, y + 4f, 9f, muted, align = Paint.Align.RIGHT)
                 drawText(c, money(item.unitPrice), 425f, y + 4f, 9f, muted, align = Paint.Align.RIGHT)
                 drawText(c, if (item.discount > 0) money(item.discount) else "—", 480f, y + 4f, 9f, muted, align = Paint.Align.RIGHT)
                 drawText(c, money(item.lineTotal), RIGHT - 2f, y + 4f, 9.5f, navy, bold = true, align = Paint.Align.RIGHT)

@@ -41,6 +41,7 @@ import com.shop.salesapp.ui.common.DetailLine
 import com.shop.salesapp.ui.common.ScreenHeader
 import com.shop.salesapp.ui.model.formatQuantity
 import com.shop.salesapp.ui.model.quantityUnit
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
 import com.shop.salesapp.ui.model.unitShort
 import com.shop.salesapp.ui.bill.WhatsAppShareIcon
 import kotlin.math.roundToInt
@@ -216,10 +217,9 @@ private fun roughRequestEstimate(request: CustomerOrderRequest, products: List<P
     var hasFixedPrice = false
     items.forEach { item ->
         val product = products.firstOrNull { it.sku == item.sku }
-        if (product != null) {
-            estimate += product.price * item.quantity
-            hasFixedPrice = true
-        }
+        if (product == null || product.requiresMeasuredQuantity()) return null
+        estimate += product.price * item.quantity
+        hasFixedPrice = true
     }
     return RoughRequestEstimate(estimate.roundToInt().takeIf { hasFixedPrice })
 }

@@ -83,6 +83,7 @@ fun AddProductScreen(
     stock: String,
     fractionalQuantity: Boolean,
     unit: String,
+    pricingUnit: String,
     photo: Bitmap?,
     onTakePhoto: () -> Unit,
     onChoosePhoto: () -> Unit,
@@ -94,6 +95,7 @@ fun AddProductScreen(
     onStock: (String) -> Unit,
     onFractionalQuantity: (Boolean) -> Unit,
     onUnit: (String) -> Unit,
+    onPricingUnit: (String) -> Unit,
     onBack: () -> Unit,
     onClear: () -> Unit,
     onSave: () -> Unit
@@ -212,6 +214,20 @@ fun AddProductScreen(
                 }
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(tr("Price in", "कीमत की इकाई"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        listOf("PIECE" to tr("Unit", "पीस"), "METRE" to tr("Metre", "मीटर"), "KG" to tr("Kg", "किलो")).forEach { (code, label) ->
+                            if (pricingUnit == code) Button(onClick = { }, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                                Text(label, maxLines = 1, fontSize = 14.sp)
+                            } else OutlinedButton(onClick = { onPricingUnit(code) }, modifier = Modifier.weight(1f).height(42.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                                Text(label, maxLines = 1, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         stock, onStock, Modifier.weight(0.9f).focusRequester(stockFocus).bringIntoViewRequester(stockBringIntoView).onFocusChanged {
@@ -237,7 +253,7 @@ fun AddProductScreen(
                         cost, onCost, Modifier.weight(1f).focusRequester(costFocus).bringIntoViewRequester(costBringIntoView).onFocusChanged {
                             if (it.isFocused) bringFocusedFieldIntoView(costBringIntoView)
                         },
-                        label = { Text(tr("Cost / ${unitShort(unit)} ₹", "लागत / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        label = { Text(tr("Cost / ${unitShort(pricingUnit)} ₹", "लागत / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                         keyboardActions = KeyboardActions(onNext = { priceFocus.requestFocus() }),
@@ -247,7 +263,7 @@ fun AddProductScreen(
                         price, onPrice, Modifier.weight(1f).focusRequester(priceFocus).bringIntoViewRequester(priceBringIntoView).onFocusChanged {
                             if (it.isFocused) bringFocusedFieldIntoView(priceBringIntoView)
                         },
-                        label = { Text(tr("Selling price / ${unitShort(unit)} ₹", "विक्रय मूल्य / ${unitHindi(unit)} ₹"), maxLines = 1, fontSize = 13.sp) },
+                        label = { Text(tr("Selling price / ${unitShort(pricingUnit)} ₹", "विक्रय मूल्य / ${unitHindi(pricingUnit)} ₹"), maxLines = 1, fontSize = 13.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus() }),

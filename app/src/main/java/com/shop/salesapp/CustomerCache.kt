@@ -8,7 +8,8 @@ data class PendingCustomer(
     val name: String,
     val phone: String,
     val email: String,
-    val address: String
+    val address: String,
+    val customerType: String = "Retail"
 )
 
 /** Small on-device index of customer details for fast phone-prefix suggestions. */
@@ -27,7 +28,7 @@ object CustomerCache {
                 val phone = row.optString("phone")
                 val name = row.optString("name")
                 if (phone.isBlank() || name.isBlank()) null
-                else ShopCustomer(row.optString("id"), name, phone, row.optString("email"))
+                else ShopCustomer(row.optString("id"), name, phone, row.optString("email"), row.optString("customerType", "Retail"))
             }
         }.getOrDefault(emptyList())
     }
@@ -41,6 +42,7 @@ object CustomerCache {
                     .put("name", customer.name)
                     .put("phone", customer.phone)
                     .put("email", customer.email)
+                    .put("customerType", customer.customerType)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -59,7 +61,7 @@ object CustomerCache {
                 val name = row.optString("name").trim()
                 val phone = row.optString("phone").trim()
                 if (name.isBlank() || normalizePhone(phone).length < 8) null
-                else PendingCustomer(name, phone, row.optString("email"), row.optString("address"))
+                else PendingCustomer(name, phone, row.optString("email"), row.optString("address"), row.optString("customerType", "Retail"))
             }
         }.getOrDefault(emptyList())
     }
@@ -74,7 +76,8 @@ object CustomerCache {
                 .put("name", it.name)
                 .put("phone", it.phone)
                 .put("email", it.email)
-                .put("address", it.address))
+                .put("address", it.address)
+                .put("customerType", it.customerType))
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -92,7 +95,8 @@ object CustomerCache {
                 .put("name", it.name)
                 .put("phone", it.phone)
                 .put("email", it.email)
-                .put("address", it.address))
+                .put("address", it.address)
+                .put("customerType", it.customerType))
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -114,7 +118,8 @@ object CustomerCache {
                 id = "LOCAL-${normalizePhone(it.phone)}",
                 name = it.name,
                 phone = it.phone,
-                email = it.email
+                email = it.email,
+                customerType = it.customerType
             )
         }
         return merge(serverCustomers, pendingCustomers)

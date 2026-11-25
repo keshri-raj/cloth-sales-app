@@ -98,6 +98,10 @@ import com.shop.salesapp.ui.model.unitPriceHindi
 import com.shop.salesapp.ui.model.unitShort
 import com.shop.salesapp.ui.model.lineAmount
 import com.shop.salesapp.ui.model.cartLineAmount
+import com.shop.salesapp.ui.model.cartLineCostAmount
+import com.shop.salesapp.ui.model.priceUnit
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
+import com.shop.salesapp.ui.model.validCartPriceQuantity
 import com.shop.salesapp.ui.model.validCartQuantity
 import com.shop.salesapp.ui.theme.Ink
 import com.shop.salesapp.ui.theme.Muted
@@ -203,6 +207,74 @@ fun CartQuantityControl(
         )
     }
 }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MeasuredQuantityControl(line: CartLine, onSet: (String, Double) -> Unit) {
+    var showEditor by remember(line.product.sku) { mutableStateOf(false) }
+    var draft by remember(line.product.sku) {
+        val initial = line.measureQuantity?.let(::formatQuantity).orEmpty()
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+    }
+    val focusRequester = remember(line.product.sku) { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (showEditor) {
+        LaunchedEffect(line.product.sku) {
+            delay(180)
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+        val priceUnit = line.product.priceUnit()
+        AlertDialog(
+            onDismissRequest = { showEditor = false; keyboard?.hide() },
+            title = { Text(tr("Enter total ${unitShort(priceUnit)}", "कुल ${unitHindi(priceUnit)} दर्ज करें"), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("Weight for ${formatQuantity(line.quantity)} pieces", "${formatQuantity(line.quantity)} पीस का वज़न"), color = Muted)
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { input ->
+                            val filtered = input.text.filter { it.isDigit() || it == '.' }
+                            if (filtered.count { it == '.' } <= 1) {
+                                val start = input.selection.start.coerceAtMost(filtered.length)
+                                val end = input.selection.end.coerceAtMost(filtered.length)
+                                draft = input.copy(text = filtered, selection = TextRange(start, end))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                        singleLine = true,
+                        placeholder = { Text("e.g. 4.5 ${unitShort(priceUnit)}") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    draft.text.toDoubleOrNull()?.takeIf { it > 0 && it <= 100000 }?.let { onSet(line.product.sku, it) }
+                    showEditor = false
+                    keyboard?.hide()
+                }) { Text(tr("Done", "हो गया")) }
+            },
+            dismissButton = { TextButton(onClick = { showEditor = false; keyboard?.hide() }) { Text(tr("Cancel", "रद्द करें")) } }
+        )
+    }
+    val display = line.measureQuantity?.let { "${formatQuantity(it)} ${unitShort(line.product.pricingUnit)}" }
+        ?: tr("Enter ${unitShort(line.product.pricingUnit)}", "${unitShort(line.product.pricingUnit)} दर्ज करें")
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable {
+            val initial = line.measureQuantity?.let(::formatQuantity).orEmpty()
+            draft = TextFieldValue(initial, selection = TextRange(initial.length))
+            showEditor = true
+        },
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFFEFF6FA),
+        border = BorderStroke(1.dp, Color(0xFFD5DDE9))
+    ) {
+        Text(display, Modifier.padding(horizontal = 12.dp, vertical = 9.dp), color = if (line.measureQuantity == null) Muted else Ink, fontWeight = FontWeight.SemiBold)
+    }
+}
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun BillScreen(
@@ -244,6 +316,7 @@ fun BillScreen(
     imageLoader: suspend (String) -> ByteArray?,
     onQuantity: (String, Double) -> Unit,
     onSetQuantity: (String, Double) -> Unit,
+    onSetMeasuredQuantity: (String, Double) -> Unit,
     onRemoveCartItem: (String) -> Unit,
     onSetUnitPrice: (String, Int, Boolean) -> Unit,
     onSellAllAtCost: (Boolean) -> Unit,
@@ -264,9 +337,7 @@ fun BillScreen(
     var promptedCustomerPhone by remember { mutableStateOf("") }
     var showClearConfirmation by remember { mutableStateOf(false) }
     val subtotal = cart.sumOf { cartLineAmount(it) }
-    val costSubtotal = cart.sumOf { line ->
-        lineAmount(line.product.costPrice, line.quantity)
-    }
+    val costSubtotal = cart.sumOf(::cartLineCostAmount)
     val maxDiscount = (subtotal - costSubtotal).coerceAtLeast(0)
     val editingPriceLine = cart.firstOrNull { it.product.sku == editingPriceSku }
     val billWideAtCost = cart.isNotEmpty() && cart.all { it.sellAtCost }
@@ -281,7 +352,7 @@ fun BillScreen(
         )
     val canApplyDiscount = cart.isNotEmpty() && !billWideAtCost && maxDiscount > 0
     val validCartQuantityAndPrice = cart.all {
-        validCartQuantity(it, enforceStock = !orderMode) && it.unitPrice > 0 &&
+        validCartQuantity(it, enforceStock = !orderMode) && (orderMode || validCartPriceQuantity(it)) && it.unitPrice > 0 &&
             (orderMode || (it.unitPrice >= it.product.costPrice && (!it.sellAtCost || it.unitPrice == it.product.costPrice)))
     }
     val validCart = cart.isNotEmpty() && validCartQuantityAndPrice
@@ -533,7 +604,7 @@ fun BillScreen(
                                     Modifier.weight(1f).aspectRatio(1f).clickable { selectedProductDetails = line.product }
                                 )
                                 Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    val priceUnit = line.product.quantityUnit()
+                                    val priceUnit = line.product.priceUnit()
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text(
@@ -570,7 +641,7 @@ fun BillScreen(
                                             border = BorderStroke(1.dp, Color(0xFFD5DDE9))
                                         ) {
                                             Column(Modifier.padding(horizontal = 6.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Text(tr("Price / unit", "एक यूनिट की कीमत"), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(tr("Price / ${unitShort(priceUnit)}", "कीमत / ${unitHindi(priceUnit)}"), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 Text(
                                                     "₹${line.unitPrice}${if (priceUnit == "PIECE") "" else "/${unitShort(priceUnit)}"}",
                                                     color = Ink,
@@ -612,6 +683,12 @@ fun BillScreen(
                                         Column(horizontalAlignment = Alignment.End) {
                                             Text(tr("Final price", "अंतिम कीमत"), color = Muted, fontSize = 12.sp, maxLines = 1)
                                         Text("₹${cartLineAmount(line)}", color = Ink, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, softWrap = false)
+                                        }
+                                    }
+                                    if (!orderMode && line.requiresMeasuredQuantity()) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(tr("Total ${unitShort(priceUnit)}", "कुल ${unitHindi(priceUnit)}"), color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                            MeasuredQuantityControl(line, onSetMeasuredQuantity)
                                         }
                                     }
                                 }

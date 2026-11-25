@@ -1,5 +1,7 @@
 package com.shop.salesapp
 
+import com.shop.salesapp.ui.model.priceUnit
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
 import android.graphics.Canvas
 import android.graphics.Bitmap
 import android.graphics.Paint
@@ -103,7 +105,7 @@ object CustomerPdfGenerator {
                     else -> "pc"
                 }
                 text(canvas!!, "${quantity(item.quantity)} $quantityUnit", 275f, y, 7.5f, gray, align = Paint.Align.RIGHT)
-                val pricePending = product == null || product.pricingUnit.isNotBlank()
+                val pricePending = product == null || product.requiresMeasuredQuantity()
                 text(canvas!!, if (pricePending) "Confirm" else "₹${money(product.price)}", 330f, y, 7.5f, gray, align = Paint.Align.RIGHT)
                 val lineAmount = if (!pricePending) product!!.price * item.quantity else null
                 text(canvas!!, lineAmount?.let { "₹${money(it.roundToInt())}" } ?: "Confirm", RIGHT - 5f, y, 7.5f, navy, true, Paint.Align.RIGHT)
@@ -219,7 +221,7 @@ object CustomerPdfGenerator {
                         canvas.drawRect(details, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cardPaper })
                         text(canvas, product.sku, LEFT + 12f, top + 192f, 8f, wine, true)
                         text(canvas, product.name.take(32), LEFT + 12f, top + 217f, 16f, 0xFF26231F.toInt(), serif = true)
-                        val priceUnit = product.pricingUnit.ifBlank { product.unit }
+                        val priceUnit = product.priceUnit()
                         val suffix = if (priceUnit.equals("PIECE", true) || priceUnit.isBlank()) "" else " / ${priceUnit.lowercase(Locale.ROOT)}"
                         text(canvas, "₹${money(product.price)}$suffix", RIGHT - 12f, top + 217f, 12f, wine, true, Paint.Align.RIGHT)
                     }
@@ -252,7 +254,7 @@ object CustomerPdfGenerator {
         var amount = 0.0
         items.forEach { item ->
             val product = products.firstOrNull { it.sku.equals(item.sku, true) } ?: return null
-            if (product.pricingUnit.isNotBlank()) return null
+            if (product.requiresMeasuredQuantity()) return null
             amount += product.price * item.quantity
         }
         return amount.roundToInt()

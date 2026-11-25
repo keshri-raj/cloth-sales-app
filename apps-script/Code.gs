@@ -615,13 +615,14 @@ function createCustomer_(config, payload) {
   const phone = String(payload.phone || '').trim();
   const email = String(payload.email || '').trim();
   const address = String(payload.address || '').trim();
+  const customerType = String(payload.customerType || '').trim().toLowerCase() === 'shop owner' ? 'Shop Owner' : 'Retail';
   if (!name) throw apiError_('Enter the customer name.', 400);
   if (normalizedPhone_(phone).length < 8) throw apiError_('Enter a valid customer phone number.', 400);
   const table = getTable_(config, 'Customers');
   if (table.rows.some(function (row) { return normalizedPhone_(row.Phone) === normalizedPhone_(phone); })) {
     throw apiError_('A customer with this phone number already exists.', 409);
   }
-  const customer = { 'Customer ID': newId_('CUS'), 'Customer Name': name, Phone: phone, Email: email, 'City / Address': address };
+  const customer = { 'Customer ID': newId_('CUS'), 'Customer Name': name, Phone: phone, Email: email, 'City / Address': address, 'Customer Type': customerType };
   writeRecords_(config, [{ title: 'Customers', table: table, rowNumber: nextFreeRow_(table), record: customer }], ['Customers']);
   return mapCustomer_(customer);
 }
@@ -928,7 +929,7 @@ function invoicePdf_(config, payload) {
       sku: String(row.SKU || ''), name: String(row['Product Name'] || ''), category: String(row.Category || ''),
       quantity: quantity, fractionalQuantity: fractionalQuantityEnabled_(product['Fractional Quantity']), unit: normalizedProductUnit_(row.Unit, product['Fractional Quantity']), unitPrice: unitPrice, unitCost: 0, discount: discount,
       measureQuantity: Number(row['Measure Quantity'] || 0), pricingUnit: normalizedPricingUnit_(row['Pricing Unit']),
-      lineTotal: Number(row['Line Total'] || Math.max(0, (normalizedPricingUnit_(row['Pricing Unit']) ? Number(row['Measure Quantity'] || 0) : quantity) * unitPrice - discount)),
+      lineTotal: Number(row['Line Total'] || Math.max(0, invoicePriceQuantity_(quantity, Number(row['Measure Quantity'] || 0), normalizedProductUnit_(row.Unit, product['Fractional Quantity']), normalizedPricingUnit_(row['Pricing Unit']) || productUnit_(product)) * unitPrice - discount)),
     };
   });
   if (!lines.length || lines.some(function (line) { return !line.name || line.quantity < 0.001 || line.unitPrice <= 0; })) {
@@ -936,7 +937,7 @@ function invoicePdf_(config, payload) {
   }
   const invoice = {
     number: invoiceNumber, date: date,
-    subtotal: lines.reduce(function (sum, line) { return sum + Math.round((line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitPrice); }, 0),
+    subtotal: lines.reduce(function (sum, line) { return sum + Math.round(invoicePriceQuantity_(line.quantity, line.measureQuantity, line.unit, line.pricingUnit) * line.unitPrice); }, 0),
     discount: lines.reduce(function (sum, line) { return sum + line.discount; }, 0),
     total: total,
     paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
@@ -994,7 +995,7 @@ function generateInvoicePdf_(config, payload) {
       unit: normalizedProductUnit_(row.Unit, product['Fractional Quantity']), unitPrice: unitPrice,
       unitCost: 0, discount: discount, measureQuantity: Number(row['Measure Quantity'] || 0),
       pricingUnit: normalizedPricingUnit_(row['Pricing Unit'] || product['Pricing Unit']),
-      lineTotal: Number(row['Line Total'] || Math.max(0, (normalizedPricingUnit_(row['Pricing Unit'] || product['Pricing Unit']) ? Number(row['Measure Quantity'] || 0) : quantity) * unitPrice - discount)),
+      lineTotal: Number(row['Line Total'] || Math.max(0, invoicePriceQuantity_(quantity, Number(row['Measure Quantity'] || 0), normalizedProductUnit_(row.Unit, product['Fractional Quantity']), normalizedPricingUnit_(row['Pricing Unit'] || product['Pricing Unit']) || productUnit_(product)) * unitPrice - discount)),
     };
   });
   if (total <= 0 || !lines.length || lines.some(function (line) { return !line.name || line.quantity < 0.001 || line.unitPrice <= 0 || line.lineTotal <= 0; })) {
@@ -1002,7 +1003,7 @@ function generateInvoicePdf_(config, payload) {
   }
   const invoice = {
     number: invoiceNumber, date: date,
-    subtotal: lines.reduce(function (sum, line) { return sum + Math.round((line.pricingUnit ? line.measureQuantity : line.quantity) * line.unitPrice); }, 0),
+    subtotal: lines.reduce(function (sum, line) { return sum + Math.round(invoicePriceQuantity_(line.quantity, line.measureQuantity, line.unit, line.pricingUnit) * line.unitPrice); }, 0),
     discount: lines.reduce(function (sum, line) { return sum + line.discount; }, 0),
     total: total, paymentMode: String(invoiceRow['Payment Mode'] || ''), paid: paid, due: Math.max(0, total - paid),
   };
@@ -1370,8 +1371,7 @@ function createProduct_(config, payload) {
   const unitCost = Number(payload.unitCost || 0);
   const stock = Number(payload.openingStock);
   const unit = normalizedProductUnit_(payload.unit, payload.fractionalQuantity);
-  // Price is always per selected stock unit (piece, metre, or kg).
-  const pricingUnit = '';
+  const pricingUnit = normalizedPricingUnit_(payload.pricingUnit) || unit;
   const fractionalQuantity = payload.fractionalQuantity === true && unit !== 'PIECE';
   if (!name || name.length > 120 || sizeVariant.length > 80 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isFinite(stock) || stock < 0 || stock > 100000 || (!fractionalQuantity && !Number.isInteger(stock)) || (fractionalQuantity && Math.abs(stock * 1000 - Math.round(stock * 1000)) > 0.000001)) {
     throw apiError_('Enter a product name, valid prices, and a valid opening quantity.', 400);
@@ -1411,7 +1411,16 @@ function createProduct_(config, payload) {
 
 function normalizedPricingUnit_(value) {
   const unit = String(value || '').trim().toUpperCase();
-  return unit === 'KG' ? 'KG' : (unit === 'METRE' || unit === 'M' ? 'METRE' : '');
+  if (unit === 'KG' || unit === 'KGS' || unit === 'KILOGRAM' || unit === 'KILOGRAMS') return 'KG';
+  if (unit === 'METRE' || unit === 'METER' || unit === 'M') return 'METRE';
+  if (unit === 'PIECE' || unit === 'PIECES' || unit === 'PCS' || unit === 'PC' || unit === 'UNIT') return 'PIECE';
+  return '';
+}
+
+function invoicePriceQuantity_(quantity, measureQuantity, soldUnit, pricingUnit) {
+  const sold = normalizedProductUnit_(soldUnit, false);
+  const priced = normalizedPricingUnit_(pricingUnit) || sold;
+  return priced === sold ? Number(quantity || 0) : Number(measureQuantity || 0);
 }
 
 function createInvoice_(config, payload, userEmail) {
@@ -1461,8 +1470,7 @@ function createInvoice_(config, payload, userEmail) {
     const quantity = Number(item.quantity);
     const fractionalAllowed = fractionalQuantityEnabled_(product['Fractional Quantity']);
     const unit = productUnit_(product);
-    // Bill quantity is the sold unit and is also the quantity used for pricing.
-    const pricingUnit = '';
+    const pricingUnit = normalizedPricingUnit_(product['Pricing Unit']) || unit;
     if (!Number.isFinite(quantity) || quantity < 0.001 || (!fractionalAllowed && !Number.isInteger(quantity)) || (fractionalAllowed && Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 0.000001)) {
       throw apiError_((fractionalAllowed ? 'Enter a valid quantity with up to three decimal places for ' : 'Enter a whole-number quantity for ') + product['Product Name'] + '.', 400);
     }
@@ -1484,12 +1492,15 @@ function createInvoice_(config, payload, userEmail) {
       throw apiError_('Unit price cannot be below cost for ' + product['Product Name'] + '. Use the cost-price option to sell at cost.', 400);
     }
     const discount = Number(item.discount || 0);
-    const measureQuantity = 0;
-    const pricedQuantity = quantity;
+    const measureQuantity = Number(item.measureQuantity || 0);
+    const pricedQuantity = invoicePriceQuantity_(quantity, measureQuantity, unit, pricingUnit);
+    if (pricingUnit !== unit && (!Number.isFinite(measureQuantity) || measureQuantity <= 0 || measureQuantity > 100000 || Math.abs(measureQuantity * 1000 - Math.round(measureQuantity * 1000)) > 0.000001)) {
+      throw apiError_('Enter the total ' + (pricingUnit === 'KG' ? 'weight in kg' : pricingUnit === 'METRE' ? 'length in metres' : 'priced quantity') + ' for ' + product['Product Name'] + '.', 400);
+    }
     if (!Number.isFinite(discount) || discount < 0 || discount > unitPrice * pricedQuantity) throw apiError_('Discount must be between zero and the item total.', 400);
     return {
       sku: String(product.SKU), name: String(product['Product Name']), category: String(product.Category || ''),
-      quantity: quantity, measureQuantity: pricingUnit ? measureQuantity : 0, pricingUnit: pricingUnit,
+      quantity: quantity, measureQuantity: pricingUnit !== unit ? measureQuantity : 0, pricingUnit: pricingUnit,
       fractionalQuantity: fractionalAllowed, unit: unit, unitPrice: unitPrice, unitCost: unitCostValue, discount: discount,
       lineTotal: Math.max(0, Math.round(pricedQuantity * unitPrice - discount)),
     };
@@ -1527,7 +1538,7 @@ function createInvoice_(config, payload, userEmail) {
   }
   const total = subtotal - billDiscount;
   if (!Number.isFinite(total) || total <= 0) throw apiError_('The bill total must be greater than zero. Check the item prices and discounts.', 400);
-  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + line.quantity * line.unitCost; }, 0);
+  const combinedCost = resolvedLines.reduce(function (sum, line) { return sum + invoicePriceQuantity_(line.quantity, line.measureQuantity, line.unit, line.pricingUnit) * line.unitCost; }, 0);
   if (total + 0.000001 < combinedCost) {
     throw apiError_('Discount is too high. The bill total cannot be below the combined purchase cost of the items.', 400);
   }
@@ -1729,8 +1740,8 @@ function formulasForRow_(title, row) {
     'Product Name': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,2,FALSE),""))',
     Category: '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,3,FALSE),""))',
     'Unit Price': '=IF(C' + row + '="","",IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,6,FALSE),""))',
-    'Line Total': '=IF(OR(C' + row + '="",F' + row + '=""),"",ROUND(MAX(0,IF(O' + row + '>0,O' + row + ',F' + row + ')*G' + row + '-H' + row + '),0))',
-    COGS: '=IF(OR(C' + row + '="",F' + row + '=""),"",IF(O' + row + '>0,O' + row + ',F' + row + ')*IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,5,FALSE),0))',
+    'Line Total': '=IF(OR(C' + row + '="",F' + row + '=""),"",ROUND(MAX(0,IF(AND(N' + row + '<>"",N' + row + '<>M' + row + '),O' + row + ',F' + row + ')*G' + row + '-H' + row + '),0))',
+    COGS: '=IF(OR(C' + row + '="",F' + row + '=""),"",IF(AND(N' + row + '<>"",N' + row + '<>M' + row + '),O' + row + ',F' + row + ')*IFERROR(VLOOKUP(C' + row + ',Inventory!$A$2:$M$1000,5,FALSE),0))',
     'Gross Profit': '=IF(OR(C' + row + '="",F' + row + '=""),"",I' + row + '-J' + row + ')',
   };
   return {};
@@ -1754,9 +1765,9 @@ function buildInvoicePdf_(invoice, customer, lines) {
   const bodyRows = lines.map(function (line) {
     const unit = normalizedProductUnit_(line.unit, line.fractionalQuantity);
     const quantityUnit = unit === 'KG' ? ' kg' : unit === 'METRE' ? ' m' : ' pcs';
-    const pricedMeasure = normalizedPricingUnit_(line.pricingUnit);
-    const quantityLabel = pricedMeasure ? Number(line.quantity) + quantityUnit + ' · ' + Number(line.measureQuantity) + (pricedMeasure === 'KG' ? ' kg' : ' m') : Number(line.quantity) + quantityUnit;
-    const priceUnit = pricedMeasure ? ' / ' + (pricedMeasure === 'KG' ? 'kg' : 'm') : (unit === 'PIECE' ? ' each' : ' / ' + (unit === 'KG' ? 'kg' : 'm'));
+    const pricedMeasure = normalizedPricingUnit_(line.pricingUnit) || unit;
+    const quantityLabel = pricedMeasure !== unit ? Number(line.quantity) + quantityUnit + ' · ' + Number(line.measureQuantity) + (pricedMeasure === 'KG' ? ' kg' : pricedMeasure === 'METRE' ? ' m' : ' pcs') : Number(line.quantity) + quantityUnit;
+    const priceUnit = pricedMeasure === 'PIECE' ? ' each' : ' / ' + (pricedMeasure === 'KG' ? 'kg' : 'm');
     return '<tr><td class="item">' + escape(line.name) + '</td><td class="num">' + quantityLabel + '</td><td class="num">' + money(line.unitPrice) + priceUnit + '</td><td class="num">' + money(line.lineTotal) + '</td></tr>';
   }).join('');
   const logo = '<svg class="brand-mark" viewBox="0 0 100 74" role="img" aria-label="Avani Suto logo"><path fill="#102f50" d="M8 67 38 8c3-6 10-6 13 0l26 59H60L43 28 24 67Z"/><path fill="#df713f" d="m44 7 8 1 28 59H65L49 32 39 51 31 55Z"/><path fill="#102f50" d="M22 47 63 39l7 12-54 9Z"/><path fill="#df713f" d="M66 58h15l4 8H70Z"/></svg>';
@@ -1789,7 +1800,7 @@ function shareInvoice_(fileId, authorizedEmails) {
 }
 
 function mapCustomer_(row) {
-  return { id: String(row['Customer ID'] || ''), name: String(row['Customer Name'] || ''), phone: String(row.Phone || ''), email: String(row.Email || '') };
+  return { id: String(row['Customer ID'] || ''), name: String(row['Customer Name'] || ''), phone: String(row.Phone || ''), email: String(row.Email || ''), customerType: String(row['Customer Type'] || 'Retail') };
 }
 
 function normalizedPhone_(value) {

@@ -12,6 +12,10 @@ fun normalizedUnit(unit: String, fractionalQuantity: Boolean = false): String = 
 
 fun Product.quantityUnit(): String = normalizedUnit(unit, fractionalQuantity)
 fun InvoiceLine.quantityUnit(): String = normalizedUnit(unit, fractionalQuantity)
+fun Product.priceUnit(): String = normalizedUnit(pricingUnit.ifBlank { unit }, fractionalQuantity)
+fun InvoiceLine.priceUnit(): String = normalizedUnit(pricingUnit.ifBlank { unit }, fractionalQuantity)
+fun Product.requiresMeasuredQuantity(): Boolean = priceUnit() != quantityUnit()
+fun InvoiceLine.requiresMeasuredQuantity(): Boolean = priceUnit() != quantityUnit()
 
 fun unitShort(unit: String): String = when (normalizedUnit(unit)) {
     "KG" -> "kg"

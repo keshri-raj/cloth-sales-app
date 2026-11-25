@@ -71,6 +71,8 @@ import com.shop.salesapp.ui.common.DetailLine
 import com.shop.salesapp.ui.common.ScreenHeader
 import com.shop.salesapp.ui.model.formatQuantity
 import com.shop.salesapp.ui.model.quantityUnit
+import com.shop.salesapp.ui.model.priceUnit
+import com.shop.salesapp.ui.model.requiresMeasuredQuantity
 import com.shop.salesapp.ui.model.unitShort
 import com.shop.salesapp.ui.model.isWithinBillCancellationWindow
 import com.shop.salesapp.ui.theme.Ink
@@ -316,9 +318,10 @@ fun BillsScreen(
                                     }
                                     Text("${line.sku} · ${line.category}", color = Muted, fontSize = 13.sp)
                                     val unit = line.quantityUnit()
-                                    val measured = line.pricingUnit.isNotBlank()
-                                    val quantityLabel = if (measured) "${formatQuantity(line.quantity)} pcs · ${formatQuantity(line.measureQuantity)} ${unitShort(line.pricingUnit)}" else "${formatQuantity(line.quantity)}${if (unit == "PIECE") "" else " ${unitShort(unit)}"}"
-                                    val priceLabelUnit = if (measured) line.pricingUnit else unit
+                                    val measured = line.requiresMeasuredQuantity()
+                                    val priceUnit = line.priceUnit()
+                                    val quantityLabel = if (measured) "${formatQuantity(line.quantity)} ${unitShort(unit)} · ${formatQuantity(line.measureQuantity)} ${unitShort(priceUnit)}" else "${formatQuantity(line.quantity)}${if (unit == "PIECE") "" else " ${unitShort(unit)}"}"
+                                    val priceLabelUnit = priceUnit
                                     Text("$quantityLabel × ₹${line.unitPrice}${if (priceLabelUnit == "PIECE") "" else "/${unitShort(priceLabelUnit)}"} = ₹${line.lineTotal}", color = Teal, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                     if (line.discount > 0) Text(tr("Discount: ₹${line.discount}", "छूट: ₹${line.discount}"), color = Muted, fontSize = 13.sp)
                                 }

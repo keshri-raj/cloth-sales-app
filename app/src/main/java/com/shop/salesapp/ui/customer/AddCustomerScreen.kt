@@ -2,6 +2,7 @@ package com.shop.salesapp.ui.customer
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,21 +21,26 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shop.salesapp.CustomerCache
 import com.shop.salesapp.ui.common.ScreenHeader
 import com.shop.salesapp.ui.theme.Muted
+import com.shop.salesapp.ui.theme.Ink
 import com.shop.salesapp.ui.theme.tr
 
 @Composable
 fun AddCustomerScreen(
     padding: PaddingValues, name: String, phone: String, email: String, address: String,
+    isShopOwner: Boolean, onShopOwnerChange: (Boolean) -> Unit,
     saving: Boolean, connected: Boolean, onName: (String) -> Unit, onPhone: (String) -> Unit,
     onEmail: (String) -> Unit, onAddress: (String) -> Unit, onBack: () -> Unit,
     onPickContact: () -> Unit, onSave: () -> Unit
@@ -61,6 +67,20 @@ fun AddCustomerScreen(
         }
         item { OutlinedTextField(email, onEmail, Modifier.fillMaxWidth(), label = { Text(tr("Email (optional)", "ईमेल (वैकल्पिक)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), shape = RoundedCornerShape(14.dp)) }
         item { OutlinedTextField(address, onAddress, Modifier.fillMaxWidth(), label = { Text(tr("Address (optional)", "पता (वैकल्पिक)")) }, minLines = 2, shape = RoundedCornerShape(14.dp)) }
+        item {
+            Surface(shape = RoundedCornerShape(14.dp), color = Color.White) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(end = 10.dp)) {
+                        Text(tr("Customer identification", "ग्राहक की पहचान"), color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        Text(tr("Shop owner", "दुकान के मालिक"), color = Muted, fontSize = 14.sp)
+                    }
+                    Switch(checked = isShopOwner, onCheckedChange = onShopOwnerChange)
+                }
+            }
+        }
         item {
             Button(onClick = onSave, enabled = name.isNotBlank() && CustomerCache.normalizePhone(phone).length >= 8 && !saving, modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(15.dp)) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
