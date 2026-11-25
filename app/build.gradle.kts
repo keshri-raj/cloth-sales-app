@@ -15,11 +15,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.shop.salesapp"
+        applicationId = "com.avanisuto.shop"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "1.0.0"
         buildConfigField("String", "SHOP_API_BASE_URL", configLiteral("shop.api.baseUrl"))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", configLiteral("google.server.clientId"))
     }
