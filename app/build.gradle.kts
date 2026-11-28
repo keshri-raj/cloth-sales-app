@@ -10,18 +10,42 @@ val localConfiguration = Properties()
 rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { localConfiguration.load(it) }
 fun configLiteral(key: String): String = "\"${localConfiguration.getProperty(key, "").replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
+val releaseStoreFile = localConfiguration.getProperty("release.storeFile", "").trim()
+val releaseStorePassword = localConfiguration.getProperty("release.storePassword", "").trim()
+val releaseKeyAlias = localConfiguration.getProperty("release.keyAlias", "").trim()
+val releaseKeyPassword = localConfiguration.getProperty("release.keyPassword", "").trim()
+val hasReleaseSigning = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword)
+    .all { it.isNotBlank() }
+
 android {
     namespace = "com.shop.salesapp"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.avanisuto.shop"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 7
         versionName = "1.0.0"
         buildConfigField("String", "SHOP_API_BASE_URL", configLiteral("shop.api.baseUrl"))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", configLiteral("google.server.clientId"))
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("releaseUpload") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("releaseUpload")
+        }
     }
 
     buildFeatures {

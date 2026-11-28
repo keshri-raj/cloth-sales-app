@@ -13,7 +13,7 @@ Run `node apps-script/local-dev.mjs` from the repository root, then open `http:/
 - Google Cloud project: `Sales App` (`sales-app-515120`, project number `866971493231`).
 - OAuth consent screen: External, Testing mode.
 - OAuth test users: `keshrirajcp@gmail.com`, `munnisbv@gmail.com`, `simransbv@gmail.com`.
-- Android OAuth client: package `com.shop.salesapp`, debug signing certificate registered.
+- Android OAuth client: package `com.avanisuto.shop` (the app's application ID). Register both the debug SHA-1 (`D7:1E:17:D9:80:53:7D:75:2A:76:0E:03:2A:68:9C:CE:2D:87:DC:C3`) and upload-key SHA-1 (`16:2A:48:7F:EE:89:D2:DE:32:53:67:DC:5D:25:B7:1A:21:8D:EC:C3`). After enabling Play App Signing, add the Play app-signing certificate SHA-1 too; Play-distributed builds use that certificate.
 - Web/server OAuth client ID: `866971493231-c6k2bc9kvutjsdasqbt45iqvvvd7v0b1.apps.googleusercontent.com`.
 - A standalone Apps Script project is deployed at `https://script.google.com/home/projects/1s_jnVs5E7f9GNY7hzk4-KNCQvOLyOSOQd6bu5tJEFJ7NvCpRrnnv02dd/edit`.
 
